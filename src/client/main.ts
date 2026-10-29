@@ -3,25 +3,38 @@ import { CHARACTERS, MOVE_INPUTS, type MoveKey, getCharacter } from '../shared/c
 import { type GameEvent, type GameState, ROUNDS_TO_WIN, TICK_RATE, createGame, step } from '../shared/game';
 import { STAGES, getStage } from '../shared/stages';
 import { CpuController } from './ai';
-import { type Weight, announce, audioSettings, setAnnouncerEnabled, setMusicEnabled, setMusicLevel, sfx, startMusic, unlockAudio } from './audio';
-import { CONTROLS_HELP, initKeyboard, readInput } from './input';
+import {
+  FIGHT_SONGS,
+  SONGS,
+  type Song,
+  type Weight,
+  announce,
+  audioSettings,
+  fightSong,
+  setAnnouncerEnabled,
+  setMusicEnabled,
+  setMusicLevel,
+  setMusicVolume,
+  setSfxVolume,
+  setTrack,
+  sfx,
+  startMusic,
+  unlockAudio,
+} from './audio';
+import { initKeyboard, readInput } from './input';
 import { NetClient, createRoom } from './net';
 import { GameRenderer } from './renderer';
 
 type Mode = 'arcade' | 'cpu' | 'local' | 'online';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const screens = ['menu', 'select', 'lobby', 'result', 'pause'] as const;
+const screens = ['menu', 'select', 'lobby', 'result', 'pause', 'options', 'guide'] as const;
 function show(screen: (typeof screens)[number] | null) {
   for (const s of screens) $(s).classList.toggle('hidden', s !== screen);
 }
 
 const renderer = new GameRenderer($<HTMLCanvasElement>('game'));
 initKeyboard();
-$('ctrl1').textContent = CONTROLS_HELP.p1;
-$('ctrl2').textContent = CONTROLS_HELP.p2;
-$('pctrl1').textContent = CONTROLS_HELP.p1;
-$('pctrl2').textContent = CONTROLS_HELP.p2;
 
 // --- Zustand -------------------------------------------------------------
 let mode: Mode = 'cpu';
@@ -215,7 +228,7 @@ function beginMatch(chars: [string, string]) {
   running = true;
   paused = false;
   accumulator = 0;
-  startMusic('fight');
+  startMusic(matchSong());
   setMusicLevel(1);
   handleEvents(state.events);
 }
@@ -233,6 +246,7 @@ function toMenu() {
   setMusicLevel(1);
   $('hud').classList.add('hidden');
   history.replaceState(null, '', location.pathname);
+  showPanel('main');
   show('menu');
 }
 
@@ -396,7 +410,7 @@ async function connectOnline(char: string, stage: string) {
   });
 }
 
-// --- Pause -------------------------------------------------------------------
+// --- Pause ---------------------------------------------------------------------
 function setPaused(on: boolean) {
   if (on && (!running || paused)) return;
   if (!on && !paused) return;
@@ -404,42 +418,142 @@ function setPaused(on: boolean) {
   $('pauseInfo').textContent =
     mode === 'online' ? 'Online läuft der Kampf weiter – dein Gegner wartet nicht!' : 'Frühstückspause – 15 Minuten, nicht mehr!';
   $('restart').classList.toggle('hidden', mode === 'online');
-  if (on) renderMoveList();
-  $('movelist').classList.add('hidden');
-  $('pause').classList.remove('moves');
   setMusicLevel(on ? 0.35 : 1);
   show(on ? 'pause' : null);
   last = performance.now();
 }
 
-function loadBloodSetting() {
+function loadSetting(key: string, fallback: string) {
   try {
-    return localStorage.getItem('wf-blood') !== 'off';
+    return localStorage.getItem(key) ?? fallback;
   } catch {
-    return true;
+    return fallback;
   }
 }
-function applyBlood(on: boolean) {
-  renderer.blood = on;
-  $('toggleBlood').textContent = `Blut: ${on ? 'an' : 'aus'}`;
+function saveSetting(key: string, value: string) {
   try {
-    localStorage.setItem('wf-blood', on ? 'on' : 'off');
+    localStorage.setItem(key, value);
   } catch {
     // privater Modus – egal
   }
 }
-applyBlood(loadBloodSetting());
 
-// --- Befehlsliste ------------------------------------------------------------
+renderer.blood = loadSetting('wf-blood', 'on') !== 'off';
+renderer.retro = Math.min(3, Math.max(0, Number(loadSetting('wf-retro', '2')) || 0));
+
+// --- Hauptmenü-Panels ----------------------------------------------------------
+type Panel = 'main' | 'play' | 'online';
+function showPanel(panel: Panel) {
+  document.querySelectorAll<HTMLElement>('#menu [data-panel]').forEach((el) => el.classList.toggle('hidden', el.dataset.panel !== panel));
+  if (panel === 'online') $<HTMLInputElement>('roomInput').focus();
+}
+document.querySelectorAll<HTMLButtonElement>('#menu [data-open]').forEach((btn) =>
+  btn.addEventListener('click', () => {
+    sfx.menu();
+    showPanel(btn.dataset.open as Panel);
+  }),
+);
+const currentPanel = () => document.querySelector<HTMLElement>('#menu [data-panel]:not(.hidden)')?.dataset.panel ?? 'main';
+
+// --- Untermenüs: Optionen und Kampfschule ---------------------------------------
+let subReturn: 'menu' | 'pause' = 'menu';
+
+function openSub(screen: 'options' | 'guide', tab?: GuideTab) {
+  unlockAudio();
+  sfx.menu();
+  subReturn = paused ? 'pause' : 'menu';
+  if (screen === 'guide') {
+    // im Kampf zuerst die Befehlsliste des eigenen Kämpfers zeigen
+    if (running) guideFighter = state.fighters[mode === 'online' ? mySlot : 0].char;
+    renderGuide(tab ?? (paused ? 'moves' : 'basics'));
+  }
+  else renderOptions();
+  show(screen);
+}
+
+function closeSub() {
+  sfx.menu();
+  // Vorschau aus den Optionen beenden: wieder den passenden Titel spielen
+  if (running) startMusic(matchSong());
+  else startMusic('menu');
+  show(subReturn === 'pause' && paused ? 'pause' : 'menu');
+}
+
+const subOpen = () => !$('options').classList.contains('hidden') || !$('guide').classList.contains('hidden');
+
+document.querySelectorAll<HTMLButtonElement>('[data-options]').forEach((b) => b.addEventListener('click', () => openSub('options')));
+document.querySelectorAll<HTMLButtonElement>('[data-guide]').forEach((b) =>
+  b.addEventListener('click', () => openSub('guide', b.dataset.tab as GuideTab | undefined)),
+);
+document.querySelectorAll<HTMLButtonElement>('[data-back]').forEach((b) => b.addEventListener('click', closeSub));
+
+/** Kampftitel des laufenden Matches (Arena bzw. Optionen, Arcade-Finale = Endgegner). */
+function matchSong() {
+  const finale = !!ladder && ladder.index === ladder.opponents.length - 1;
+  return fightSong(Math.max(0, STAGES.findIndex((st) => st.id === state.stage)), finale);
+}
+
+// Optionen
+const RETRO_LABELS = ['aus', 'leicht', 'mittel', 'stark'];
+const TRACKS = ['auto', ...FIGHT_SONGS];
+const trackLabel = (t: string) => (t === 'auto' ? 'Automatisch (je Arena)' : SONGS[t as Song].title);
+const onOff = (on: boolean) => (on ? 'an' : 'aus');
+
+function renderOptions() {
+  $('optRetro').textContent = RETRO_LABELS[renderer.retro];
+  $('optBlood').textContent = onOff(renderer.blood);
+  $('optMusic').textContent = onOff(audioSettings.music);
+  $('optTrack').textContent = trackLabel(audioSettings.track);
+  $('optAnnouncer').textContent = onOff(audioSettings.announcer);
+  $<HTMLInputElement>('optMusicVol').value = String(Math.round(audioSettings.musicVolume * 100));
+  $<HTMLInputElement>('optSfxVol').value = String(Math.round(audioSettings.sfxVolume * 100));
+}
+
+function option(id: string, change: () => void) {
+  $(id).addEventListener('click', (e) => {
+    e.preventDefault();
+    change();
+    sfx.menu();
+    renderOptions();
+  });
+}
+option('optRetro', () => {
+  renderer.retro = (renderer.retro + 1) % 4;
+  saveSetting('wf-retro', String(renderer.retro));
+});
+option('optBlood', () => {
+  renderer.blood = !renderer.blood;
+  saveSetting('wf-blood', renderer.blood ? 'on' : 'off');
+});
+option('optMusic', () => setMusicEnabled(!audioSettings.music));
+option('optTrack', () => {
+  const t = TRACKS[(TRACKS.indexOf(audioSettings.track) + 1) % TRACKS.length];
+  setTrack(t);
+  // Vorschau
+  startMusic(t === 'auto' ? (running ? matchSong() : 'menu') : (t as Song));
+});
+option('optAnnouncer', () => {
+  setAnnouncerEnabled(!audioSettings.announcer);
+  if (audioSettings.announcer) announce('Schichtbeginn!');
+});
+$<HTMLInputElement>('optMusicVol').addEventListener('input', (e) => setMusicVolume(Number((e.target as HTMLInputElement).value) / 100));
+$<HTMLInputElement>('optSfxVol').addEventListener('input', (e) => setSfxVolume(Number((e.target as HTMLInputElement).value) / 100));
+$<HTMLInputElement>('optSfxVol').addEventListener('change', () => sfx.hit('mid'));
+
+// Kampfschule
+type GuideTab = 'basics' | 'combos' | 'moves' | 'controls';
 const MOVE_ORDER: MoveKey[] = ['light', 'light2', 'finisher', 'heavy', 'kick', 'kick2', 'fwdLight', 'fwdKick', 'overhead', 'launcher', 'lowLight', 'lowKick', 'low', 'air', 'airKick', 'special', 'rush', 'throw'];
-const COMBOS = [
-  'Leicht, Leicht, Schwer',
-  'Leicht, Leicht, Tritt',
-  'Leicht, Tritt, Tritt',
-  'Schwer, Tritt',
-  '→ + Leicht, Schwer',
-  '↓ + Leicht, ↓ + Leicht, ↓ + Tritt',
-  '← + Schwer (Launcher), dann in der Luft: Leicht, Leicht, Schwer',
+let guideFighter = '';
+
+const COMBO_TABLE: [string, string, string, string][] = [
+  ['Leicht, Leicht, Schwer', '3', 'Die Grundkette. Der letzte Schlag stößt den Gegner weit zurück.', '★'],
+  ['Leicht, Leicht, Tritt', '3', 'Endet mit einem Doppeltritt, der Gegner bleibt nah bei dir.', '★'],
+  ['Leicht, Tritt, Tritt', '3', 'Schnell und sicher, gut als Antwort auf einen geblockten Angriff.', '★'],
+  ['Schwer, Tritt', '2', 'Trifft der schwere Schlag, sofort Tritt hinterher.', '★★'],
+  ['→ + Leicht, Schwer', '2', 'Vorstoß mit Reichweite, holt den Gegner aus der Distanz.', '★★'],
+  ['↓ Leicht, ↓ Leicht, ↓ Tritt', '3', 'Komplett tief – muss geduckt geblockt werden.', '★★'],
+  ['← + Schwer, nachlaufen, Leicht, Leicht, Schwer', 'bis 4', 'Launcher-Juggle: Gegner hochschleudern, hinterher (→ oder Dash) und zuschlagen, sobald er wieder fällt.', '★★★'],
+  ['← + Schwer, Dash, Leicht, Tritt, Tritt', 'bis 4', 'Juggle-Variante mit Tritten, trägt den Gegner Richtung Wand.', '★★★'],
 ];
 
 function moveTag(char: string, m: MoveKey) {
@@ -454,47 +568,74 @@ function moveTag(char: string, m: MoveKey) {
   return tags.join(' · ');
 }
 
-function renderMoveList() {
-  const el = $('movelist');
-  const seen = new Set<string>();
-  el.innerHTML = '';
-  state.fighters.forEach((f) => {
-    if (seen.has(f.char)) return;
-    seen.add(f.char);
-    const c = getCharacter(f.char);
+function renderGuide(tab: GuideTab) {
+  document.querySelectorAll<HTMLButtonElement>('#guide .tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === tab));
+  const body = $('guideBody');
+  if (tab === 'basics') {
+    body.innerHTML = `
+      <div class="cols">
+        <div><h3>Blocken</h3><p><b>Vom Gegner weg halten</b> blockt hohe und mittlere Angriffe. <b>↓ + zurück</b> blockt tief.
+          Tiefe Angriffe (alle ↓-Moves, Feger) gehen nur geduckt zu blocken, <b>Überkopf (→ + Schwer)</b> und Sprungangriffe nur stehend.</p></div>
+        <div><h3>Bewegen</h3><p><b>→ →</b> Dash nach vorn, <b>← ←</b> Rückwärts-Dash zum Ausweichen. <b>↑</b> springt, in der Luft gehen Leicht, Schwer und Tritt.</p></div>
+        <div><h3>Würfe</h3><p><b>Leicht + Tritt gleichzeitig</b>, nah am Gegner. Würfe gehen durch jeden Block und werfen zu Boden. Gegner in der Luft lassen sich nicht werfen.</p></div>
+        <div><h3>Am Boden</h3><p>Feger, Überkopf, Ansturm, Wurf und Juggles werfen um. Am Boden liegt man kurz <b>unverwundbar</b> und steht dann automatisch auf – nicht blind draufhauen, sondern abwarten.</p></div>
+        <div><h3>Spezial</h3><p><b>Spezial</b> wirft das Geschoss deines Kämpfers, <b>→ + Spezial</b> ist ein Ansturm quer durch die Halle, der umwirft.</p></div>
+        <div><h3>Runden</h3><p>Best of 3, 99 Sekunden pro Runde. Wer zuerst zwei Runden gewinnt, hat <b>Feierabend</b>. Der letzte Schlag kommt in Zeitlupe.</p></div>
+      </div>`;
+  } else if (tab === 'combos') {
+    const rows = COMBO_TABLE.map(([input, hits, text, diff]) => `<tr><td class="in">${input}</td><td class="hits">${hits}</td><td>${text}</td><td class="tag">${diff}</td></tr>`).join('');
+    body.innerHTML = `
+      <p class="intro"><b>So funktionieren Kombos:</b> Trifft ein Angriff, kannst du ihn mit dem nächsten Knopf <b>abbrechen</b> und direkt weiterschlagen.
+        Drück den nächsten Knopf kurz nachdem der Schlag trifft – ein Eingabepuffer merkt sich Tastendrücke etwa eine Achtelsekunde lang.
+        Wird der erste Schlag geblockt, endet die Kette. Jeder weitere Treffer macht etwas weniger Schaden, der Zähler am Bildrand zeigt die Treffer.</p>
+      <table><tr><th>Eingabe</th><th>Treffer</th><th>Erklärung</th><th>Schwierigkeit</th></tr>${rows}</table>
+      <p class="intro"><b>Mixup-Tipp:</b> Blockt der Gegner viel, <b>werfen</b>. Duckt er, <b>Überkopf (→ + Schwer)</b>. Steht er, <b>Feger (↓ + Schwer)</b>.</p>`;
+  } else if (tab === 'moves') {
+    if (!guideFighter || !CHARACTERS.some((c) => c.id === guideFighter)) guideFighter = running ? state.fighters[mode === 'online' ? mySlot : 0].char : CHARACTERS[0].id;
+    const c = getCharacter(guideFighter);
+    const options = CHARACTERS.map((f) => `<option value="${f.id}"${f.id === c.id ? ' selected' : ''}>${f.icon} ${f.name}</option>`).join('');
     const rows = MOVE_ORDER.map((m) => `<tr><td class="in">${MOVE_INPUTS[m]}</td><td>${c.moves[m].name}</td><td class="tag">${moveTag(c.id, m)}</td></tr>`).join('');
-    el.insertAdjacentHTML('beforeend', `<div><h3>${c.icon} ${c.name}</h3><table>${rows}</table></div>`);
-  });
-  el.insertAdjacentHTML(
-    'beforeend',
-    `<div class="combos"><b>Kombos:</b> ${COMBOS.join(' &nbsp;|&nbsp; ')}<br/><b>Bewegung:</b> → → Dash, ← ← Rückwärts-Dash, ↓ halten = tief blocken, ← halten = blocken. Würfe sind nicht blockbar, tiefe Angriffe nur geduckt.</div>`,
-  );
+    body.innerHTML = `<label class="pick">Kämpfer <select id="guideFighter">${options}</select></label><table>${rows}</table>`;
+    $<HTMLSelectElement>('guideFighter').addEventListener('change', (e) => {
+      guideFighter = (e.target as HTMLSelectElement).value;
+      renderGuide('moves');
+    });
+  } else {
+    body.innerHTML = `
+      <table>
+        <tr><th>Aktion</th><th>Spieler 1</th><th>Spieler 2</th><th>Gamepad</th></tr>
+        <tr><td>Bewegen / Springen / Ducken</td><td class="in">W A S D</td><td class="in">Pfeiltasten</td><td class="in">Stick / D-Pad</td></tr>
+        <tr><td>Leicht</td><td class="in">F</td><td class="in">,</td><td class="in">X / □</td></tr>
+        <tr><td>Schwer</td><td class="in">G</td><td class="in">.</td><td class="in">Y / △</td></tr>
+        <tr><td>Tritt</td><td class="in">V</td><td class="in">M</td><td class="in">A / ✕</td></tr>
+        <tr><td>Spezial</td><td class="in">H</td><td class="in">-</td><td class="in">B / ○</td></tr>
+        <tr><td>Wurf</td><td class="in">F + V</td><td class="in">, + M</td><td class="in">RB / R1</td></tr>
+        <tr><td>Pause</td><td class="in" colspan="2">Esc oder P</td><td class="in">Start</td></tr>
+      </table>
+      <p class="intro">Gegen CPU und online funktionieren beide Tastaturbelegungen. Ziffernblock für Spieler 2: 1 leicht, 2 schwer, 3 Spezial, 0 Tritt.</p>`;
+  }
 }
+document.querySelectorAll<HTMLButtonElement>('#guide .tabs button').forEach((b) =>
+  b.addEventListener('click', () => {
+    sfx.menu();
+    renderGuide(b.dataset.tab as GuideTab);
+  }),
+);
 
-function applyToggle(id: string, label: string, on: boolean) {
-  $(id).textContent = `${label}: ${on ? 'an' : 'aus'}`;
+/** Esc / Start: Untermenü schließen, sonst Pause umschalten. */
+function onBack() {
+  if (subOpen()) closeSub();
+  else if (!$('menu').classList.contains('hidden') && currentPanel() !== 'main') showPanel('main');
+  else setPaused(!paused);
 }
-applyToggle('toggleMusic', 'Musik', audioSettings.music);
-applyToggle('toggleAnnouncer', 'Ansager', audioSettings.announcer);
-$('toggleMusic').addEventListener('click', () => {
-  setMusicEnabled(!audioSettings.music);
-  setMusicLevel(paused ? 0.35 : 1);
-  applyToggle('toggleMusic', 'Musik', audioSettings.music);
-});
-$('toggleAnnouncer').addEventListener('click', () => {
-  setAnnouncerEnabled(!audioSettings.announcer);
-  applyToggle('toggleAnnouncer', 'Ansager', audioSettings.announcer);
-});
-$('toggleMoves').addEventListener('click', () => {
-  const open = $('movelist').classList.toggle('hidden') === false;
-  $('pause').classList.toggle('moves', open);
-});
 
 window.addEventListener('keydown', (e) => {
-  if (e.code === 'Escape' || e.code === 'KeyP') setPaused(!paused);
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) {
+    if (e.code !== 'Escape') return;
+  }
+  if (e.code === 'Escape' || (e.code === 'KeyP' && !subOpen())) onBack();
 });
 $('resume').addEventListener('click', () => setPaused(false));
-$('toggleBlood').addEventListener('click', () => applyBlood(!renderer.blood));
 $('pauseMenu').addEventListener('click', toMenu);
 $('restart').addEventListener('click', () => {
   paused = false;
@@ -509,7 +650,7 @@ $('restart').addEventListener('click', () => {
 let padStartWasDown = false;
 function pollPadPause() {
   const down = Array.from(navigator.getGamepads?.() ?? []).some((p) => p?.buttons[9]?.pressed);
-  if (down && !padStartWasDown) setPaused(!paused);
+  if (down && !padStartWasDown) onBack();
   padStartWasDown = down;
 }
 
@@ -564,28 +705,6 @@ function firstGesture() {
 }
 window.addEventListener('pointerdown', firstGesture);
 window.addEventListener('keydown', firstGesture);
-
-// Retro-Pixelfilter: aus / leicht / mittel / stark
-const RETRO_LABELS = ['aus', 'leicht', 'mittel', 'stark'];
-function loadRetro() {
-  try {
-    const v = Number(localStorage.getItem('wf-retro') ?? 2);
-    return v >= 0 && v <= 3 ? v : 2;
-  } catch {
-    return 2;
-  }
-}
-function applyRetro(level: number) {
-  renderer.retro = level;
-  for (const id of ['retroMenu', 'retroPause']) $(id).textContent = `Retro-Filter: ${RETRO_LABELS[level]}`;
-  try {
-    localStorage.setItem('wf-retro', String(level));
-  } catch {
-    // egal
-  }
-}
-applyRetro(loadRetro());
-for (const id of ['retroMenu', 'retroPause']) $(id).addEventListener('click', () => applyRetro((renderer.retro + 1) % 4));
 
 // Direkt-Einladung per Link: ?room=CODE
 const roomParam = new URLSearchParams(location.search).get('room');
