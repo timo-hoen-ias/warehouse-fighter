@@ -4,7 +4,7 @@ Ein 3D-Kampfspiel im Stil von Street Fighter / Tekken – ausgetragen in Lager 3
 zwischen Hochregalen, Europaletten und einem geparkten Gabelstapler.
 Gerendert mit **three.js**, gehostet auf **Cloudflare** (Worker + Durable Objects für Online-Kämpfe).
 
-![Screenshot](docs/screenshot.png)
+![Screenshot](docs/screenshot.jpg)
 
 > Erster Entwurf. Alles (Modelle, Halle, Sounds) ist prozedural erzeugt – keine externen Assets.
 
@@ -12,20 +12,44 @@ Gerendert mit **three.js**, gehostet auf **Cloudflare** (Worker + Durable Object
 
 | Modus | Beschreibung |
 | --- | --- |
-| Gegen CPU | Einzelspieler gegen einen einfachen KI-Gegner |
+| Arcade | Kämpfe dich nacheinander durch alle 9 Gegner, jeder in einer anderen Halle. Die CPU wird mit jedem Gegner stärker |
+| Gegen CPU (frei) | Kämpfer, CPU-Gegner und Arena frei wählen |
 | 2 Spieler lokal | Zwei Spieler an einer Tastatur (oder zwei Gamepads) |
-| Online | Raum erstellen, Code/Link teilen, 1-gegen-1 über das Internet |
+| Online | Raum erstellen, Arena wählen, Code/Link teilen, 1-gegen-1 über das Internet |
 
-## Kämpfer
+## Kämpfer (10)
 
-| | Gabelstapler-Gerd | Kommi-Kim | Packer Piet |
-| --- | --- | --- | --- |
-| Typ | schwer & langsam | schnell & fragil | ausgewogen |
-| Leicht | Klemmbrett-Klatscher | Scanner-Jab | Klebeband-Ohrfeige |
-| Schwer | Gabelzinken-Stoß | Picklisten-Kick | Karton-Kopfnuss |
-| Tief (↓ + schwer) | Palettenrutscher | Rollwagen-Tritt | Stretchfolien-Feger |
-| Sprung | Hubmast-Hammer | Regalsprung-Kick | Paket-Bombe |
-| Spezial (Projektil) | Europaletten-Wurf | Barcode-Strahl | Karton-Kanone |
+| Kämpfer | Typ | Spezial (Projektil) |
+| --- | --- | --- |
+| 🏗️ Gabelstapler-Gerd | schwer, langsam | Europaletten-Wurf |
+| 📟 Kommi-Kim | schnell, fragil | Barcode-Strahl |
+| 📦 Packer Piet | ausgewogen | Karton-Kanone |
+| 📋 Lagerleiterin Lena | ausgewogen, gute Reichweite | KPI-Klemmbrett |
+| 🚚 LKW-Ludger | sehr schwer, sehr langsam | Hupkonzert (Schallwelle) |
+| ☕ Praktikant Paul | sehr schnell, wenig Ausdauer | Kaffeebecher-Wurf |
+| 🏷️ Inventur-Ingrid | schnell, schnelles Projektil | Etiketten-Salve |
+| 🧊 Kühlhaus-Kalle | schwer, rutschige Grätsche | Eisblock |
+| ↩️ Retouren-Rita | ausgewogen | Rücksende-Paket |
+| 🤖 Robo-Picker RX-7 | Roboter, verliert Öl statt Blut | Lidar-Strahl |
+
+Jeder hat einen leichten, schweren, tiefen (↓ + schwer) und Sprungangriff – Namen und Werte in `src/shared/characters.ts`.
+
+## Arenen (10)
+
+Lager 3 · Wareneingang · Kühlhaus −24 °C (Schneefall) · Laderampe bei Nacht · Automatisches Hochregallager (fahrende Shuttles) ·
+Packstation 7 (laufende Förderbänder) · Retourenhalle · Containerterminal (draußen am Kai) · Paketzentrum-Sortieranlage ·
+Gefahrgutlager (rotierende Warnleuchten) · Black Friday Peak Season (Paketberg, Lichterketten)
+
+![Alle Arenen](docs/arenen.jpg)
+
+## Finisher, Blut und Pause
+
+- Treffer spritzen Blut (beim Roboter Öl), die Flecken bleiben eine Weile auf dem Hallenboden.
+- Der **finale Schlag** löst eine **Zeitlupe** aus, die Kamera zoomt heran, und je nach Runde fliegt dem Verlierer
+  **der Kopf** oder **ein Arm** weg – oder er kracht **quer durch die Halle ins Regal**. Die Zeitlupe läuft in der
+  gemeinsamen Simulation, online sehen also beide Spieler denselben Finisher.
+- **Pause:** `Esc`, `P` oder Start am Gamepad. Dort lässt sich das Blut auch abschalten (wird im Browser gespeichert).
+  Online läuft der Kampf während der Pause weiter.
 
 ## Steuerung
 
@@ -55,6 +79,7 @@ Vite leitet `/api` (inkl. WebSockets) an den lokalen Worker weiter, d. h. Online
 lassen sich lokal mit zwei Browserfenstern testen.
 
 Alternativ alles in einem Prozess wie in Produktion: `npm run preview` → http://localhost:8787
+(`wrangler.jsonc` enthält einen Build-Schritt, Wrangler baut das Frontend also selbst).
 
 Weitere Befehle: `npm run typecheck`, `npm test` (Unit-Tests der Spiellogik).
 
@@ -68,7 +93,7 @@ Durable Objects auf SQLite-Basis laufen auch im kostenlosen Workers-Plan.
 
 ```bash
 npx wrangler login
-npm run deploy         # = vite build && wrangler deploy
+npm run deploy         # = wrangler deploy (baut vorher automatisch das Frontend)
 ```
 
 Danach läuft das Spiel unter `https://warehouse-fighter.<dein-subdomain>.workers.dev`.
@@ -84,8 +109,11 @@ sobald im Repo unter *Settings → Secrets and variables → Actions* diese Secr
 
 Ohne Secrets wird der Deploy-Schritt einfach übersprungen.
 
-Alternativ: im Cloudflare-Dashboard *Workers & Pages → Create → Import a repository* wählen,
-dieses Repo verbinden, Build-Befehl `npm run build`, Deploy-Befehl `npx wrangler deploy`.
+Alternativ: im Cloudflare-Dashboard *Workers & Pages → Create → Import a repository* wählen
+(Workers Builds) und dieses Repo verbinden. Die Standardbefehle (`npx wrangler deploy` bzw. für
+PR-Branches `npx wrangler versions upload`) reichen, weil `wrangler.jsonc` das Frontend vorher selbst baut.
+Hinweis: Preview-Builds für PRs klappen erst, wenn `main` einmal erfolgreich deployt wurde
+(das Durable Object braucht beim ersten Mal ein echtes `wrangler deploy`).
 
 ## Architektur
 
@@ -94,11 +122,12 @@ src/
   shared/      Spiellogik – läuft im Browser UND im Durable Object
     game.ts        Simulation mit 60 Ticks/s (Bewegung, Hitboxen, Block, Runden)
     characters.ts  Kämpferwerte und Angriffe
+    stages.ts      Liste der Arenen
     protocol.ts    WebSocket-Nachrichten
   client/      Browser
     main.ts        Menüs, Spielmodi, Hauptschleife
     renderer.ts    three.js-Szene, Kamera, Partikel, Projektile
-    stage.ts       Lagerhalle (Hochregale, Paletten, Stapler, Rolltore)
+    stage.ts       die 10 Arenen (Baukasten aus Regalen, Paletten, Förderbändern …)
     fighterModel.ts Lagerarbeiter-Modelle + prozedurale Animation
     input.ts / ai.ts / audio.ts / net.ts
   worker/
@@ -116,7 +145,6 @@ dafür spürt man die Latenz zum nächsten Cloudflare-Standort (in Europa typisc
 - Rollback-Netcode bzw. Client-Prediction für weniger spürbare Latenz
 - Super-Angriff mit „Schicht-Meter“ (z. B. Gerd fährt mit dem Stapler durchs Bild)
 - Würfe/Griffe, Combos mit Cancel-Fenstern, Knockdown + Aufstehen
-- Mehr Kämpfer (Lagerleiterin, LKW-Fahrer, Inventur-Praktikant) und Arenen (Kühlhaus, Laderampe)
 - Richtige 3D-Modelle (glTF) mit Animationen statt Grundkörpern
 - Matchmaking-Queue statt nur Raumcodes, Ranglisten via D1
 - Touch-Steuerung für Smartphones

@@ -3,6 +3,9 @@
   "name": "warehouse-fighter",
   "main": "src/worker/index.ts",
   "compatibility_date": "2026-10-01",
+  // Vor jedem deploy / versions upload das Frontend bauen – auch bei Cloudflare Workers Builds
+  // (Git-Integration), wo sonst ./dist fehlt.
+  "build": { "command": "npm run build", "watch_dir": ["src/client", "index.html"] },
   // Vite baut das Frontend nach ./dist, der Worker liefert es als Static Assets aus.
   "assets": {
     "directory": "./dist",

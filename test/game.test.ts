@@ -109,3 +109,37 @@ describe('Simulation', () => {
     expect(copy.fighters).toEqual(s.fighters);
   });
 });
+
+describe('Finisher', () => {
+  it('KO startet Zeitlupe und wählt einen Finisher', () => {
+    const s = fightReady();
+    s.fighters[1].hp = 1;
+    placeClose(s);
+    step(s, [INPUT.LIGHT, 0]);
+    let ko = false;
+    for (let i = 0; i < 12 && !ko; i++) {
+      step(s, [0, 0]);
+      ko = s.phase === 'roundEnd';
+    }
+    expect(ko).toBe(true);
+    expect(s.finisher?.loser).toBe(1);
+    expect(['head', 'arm', 'wall']).toContain(s.finisher?.kind);
+    expect(s.slowmo).toBeGreaterThan(0);
+    // In der Zeitlupe läuft die Simulation nur mit einem Viertel der Geschwindigkeit
+    const before = s.phaseTime;
+    run(s, 40);
+    expect(s.phaseTime - before).toBe(10);
+  });
+
+  it('neue Runde setzt Zeitlupe und Finisher zurück', () => {
+    const s = fightReady();
+    s.fighters[1].hp = 0;
+    step(s, [0, 0]);
+    expect(s.finisher).not.toBeNull();
+    let guard = 0;
+    while (s.phase !== 'intro' && guard++ < 2000) step(s, [0, 0]);
+    expect(s.round).toBe(2);
+    expect(s.finisher).toBeNull();
+    expect(s.slowmo).toBe(0);
+  });
+});

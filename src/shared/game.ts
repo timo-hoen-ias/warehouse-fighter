@@ -1,7 +1,7 @@
 // Spiel-Simulation. Läuft identisch im Browser (Lokal / CPU) und im
 // Durable Object (Online, serverautoritativ). Keine DOM- oder three.js-Abhängigkeiten.
 
-import { type Box, type MoveKey, getCharacter, moveLength } from './characters';
+import { type Box, type MoveKey, type ProjectileKind, getCharacter, moveLength } from './characters';
 
 export const TICK_RATE = 60;
 export const ARENA_HALF_WIDTH = 7;
@@ -62,7 +62,7 @@ export interface Fighter {
 
 export interface Projectile {
   owner: 0 | 1;
-  kind: 'pallet' | 'laser' | 'box';
+  kind: ProjectileKind;
   x: number;
   y: number;
   vx: number;
@@ -77,15 +77,25 @@ export type GameEvent =
   | { type: 'block'; x: number; y: number; target: 0 | 1 }
   | { type: 'swing'; player: 0 | 1; move: MoveKey }
   | { type: 'projectile'; player: 0 | 1; kind: Projectile['kind'] }
-  | { type: 'ko'; loser: 0 | 1 }
+  | { type: 'ko'; loser: 0 | 1; finisher: FinisherKind }
   | { type: 'timeout' }
   | { type: 'roundStart'; round: number }
   | { type: 'fight' }
   | { type: 'matchEnd'; winner: 0 | 1 | -1 };
 
+/** Finaler Schlag: Kopf fliegt, Arm fliegt oder Gegner kracht gegen die Hallenwand. */
+export type FinisherKind = 'head' | 'arm' | 'wall';
+
+/** Dauer der Zeitlupe nach dem finalen Schlag (in Ticks Echtzeit). */
+export const SLOWMO_TICKS = 120;
+/** In der Zeitlupe läuft nur jeder n-te Tick die Simulation. */
+export const SLOWMO_FACTOR = 4;
+
 export type Phase = 'intro' | 'fight' | 'roundEnd' | 'matchEnd';
 
 export interface GameState {
+  /** Arena-ID, siehe stages.ts */
+  stage: string;
   tick: number;
   phase: Phase;
   phaseTime: number;
@@ -97,6 +107,9 @@ export interface GameState {
   events: GameEvent[];
   roundWinner: 0 | 1 | -1 | null;
   matchWinner: 0 | 1 | -1 | null;
+  /** Restliche Zeitlupen-Ticks nach dem KO (0 = normal). */
+  slowmo: number;
+  finisher: { kind: FinisherKind; loser: 0 | 1 } | null;
 }
 
 function createFighter(char: string, slot: 0 | 1): Fighter {
@@ -122,8 +135,9 @@ function createFighter(char: string, slot: 0 | 1): Fighter {
   };
 }
 
-export function createGame(charA: string, charB: string): GameState {
+export function createGame(charA: string, charB: string, stage = 'wareneingang'): GameState {
   return {
+    stage,
     tick: 0,
     phase: 'intro',
     phaseTime: 0,
@@ -132,6 +146,8 @@ export function createGame(charA: string, charB: string): GameState {
     fighters: [createFighter(charA, 0), createFighter(charB, 1)],
     projectiles: [],
     events: [{ type: 'roundStart', round: 1 }],
+    slowmo: 0,
+    finisher: null,
     roundWinner: null,
     matchWinner: null,
   };
@@ -149,6 +165,8 @@ function resetRound(s: GameState) {
   s.phase = 'intro';
   s.phaseTime = 0;
   s.roundWinner = null;
+  s.slowmo = 0;
+  s.finisher = null;
   s.events.push({ type: 'roundStart', round: s.round });
 }
 
@@ -445,7 +463,13 @@ function checkRoundEnd(s: GameState) {
   let winner: 0 | 1 | -1 | null = null;
   if (a.hp <= 0 || b.hp <= 0) {
     winner = a.hp <= 0 && b.hp <= 0 ? -1 : a.hp <= 0 ? 1 : 0;
-    s.events.push({ type: 'ko', loser: winner === 0 ? 1 : 0 });
+    const loser = winner === 0 ? 1 : 0;
+    // Abwechslung, aber deterministisch (Server und Client sind sich einig)
+    const kinds: FinisherKind[] = ['head', 'wall', 'arm'];
+    const kind = kinds[(s.tick + s.round) % kinds.length];
+    s.finisher = { kind, loser };
+    s.slowmo = SLOWMO_TICKS;
+    s.events.push({ type: 'ko', loser, finisher: kind });
   } else if (s.timer <= 0) {
     const ra = a.hp / getCharacter(a.char).maxHp;
     const rb = b.hp / getCharacter(b.char).maxHp;
@@ -467,8 +491,9 @@ function checkRoundEnd(s: GameState) {
     if (f.hp <= 0) {
       f.status = 'ko';
       f.statusTime = 0;
-      f.vy = Math.max(f.vy, 0.1);
-      f.vx = -f.facing * 0.06;
+      const wall = s.finisher?.kind === 'wall';
+      f.vy = Math.max(f.vy, wall ? 0.16 : 0.1);
+      f.vx = -f.facing * (wall ? 0.12 : 0.06);
     }
   }
 }
@@ -477,6 +502,10 @@ function checkRoundEnd(s: GameState) {
 export function step(s: GameState, inputs: [number, number]) {
   s.events = [];
   s.tick += 1;
+  if (s.slowmo > 0) {
+    s.slowmo -= 1;
+    if (s.slowmo % SLOWMO_FACTOR !== 0) return;
+  }
   s.phaseTime += 1;
 
   if (s.phase === 'intro' && s.phaseTime >= INTRO_TICKS) {

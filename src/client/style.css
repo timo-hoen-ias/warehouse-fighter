@@ -44,17 +44,20 @@ button.back { background: #455a64; color: #fff; }
 .small { font-family: system-ui, sans-serif; font-size: 14px; color: #b0bec5; }
 .code { font-size: 64px; letter-spacing: 10px; color: var(--yellow); text-shadow: 0 4px 0 #000; }
 
-.cards { display: flex; flex-wrap: wrap; gap: 16px; justify-content: center; }
+.cards { display: grid; grid-template-columns: repeat(5, minmax(0, 190px)); gap: 12px; justify-content: center; max-height: 72vh; overflow-y: auto; padding: 14px 6px 8px; }
+.cards.stages { grid-template-columns: repeat(4, minmax(0, 230px)); }
+@media (max-width: 1000px) { .cards, .cards.stages { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); width: 100%; } }
 .card {
-  width: 220px; padding: 14px; border: 3px solid #000; border-radius: 8px; background: var(--panel); cursor: pointer;
+  padding: 10px; border: 3px solid #000; border-radius: 8px; background: var(--panel); cursor: pointer;
   text-align: left; box-shadow: 0 6px 0 #000; position: relative; font-family: system-ui, sans-serif;
 }
 .card:hover { outline: 3px solid var(--yellow); }
-.card .swatch { height: 90px; border-radius: 4px; margin-bottom: 10px; display: grid; place-items: center; font-size: 54px; }
-.card h3 { margin: 0 0 4px; font-family: 'Arial Black', sans-serif; font-size: 17px; }
-.card .job { color: var(--yellow); font-size: 12px; margin-bottom: 6px; }
-.card .bio { font-size: 13px; color: #cfd8dc; min-height: 34px; }
-.card .stats { font-size: 12px; color: #90a4ae; margin-top: 8px; }
+.card .swatch { height: 64px; border-radius: 4px; margin-bottom: 8px; display: grid; place-items: center; font-size: 40px; }
+.card.stage .swatch { height: 70px; }
+.card h3 { margin: 0 0 3px; font-family: 'Arial Black', sans-serif; font-size: 15px; }
+.card .job { color: var(--yellow); font-size: 11px; margin-bottom: 4px; }
+.card .bio { font-size: 12px; color: #cfd8dc; }
+.card .stats { font-size: 11px; color: #90a4ae; margin-top: 6px; }
 .card .badge { position: absolute; top: -12px; right: 10px; padding: 2px 8px; border-radius: 4px; font-family: 'Arial Black'; font-size: 13px; border: 2px solid #000; }
 .badge.p1 { background: #29b6f6; }
 .badge.p2 { background: #ef5350; }

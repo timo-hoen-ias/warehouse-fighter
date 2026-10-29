@@ -130,6 +130,10 @@ function limb(len: number, radius: number, mat: THREE.Material) {
 
 export class FighterModel {
   readonly root = new THREE.Group();
+  /** Zusatzversatz für den Finisher „gegen die Wand“ (vom Renderer gesteuert). */
+  readonly offset = new THREE.Vector3();
+  spin = 0;
+  private stumps: THREE.Mesh[] = [];
   private orient = new THREE.Group();
   private hips = new THREE.Group();
   private torso = new THREE.Group();
@@ -148,7 +152,7 @@ export class FighterModel {
       this.flashMats.push(m);
       return m;
     };
-    const skin = std(c.skin);
+    const skin = def.robot ? std(c.skin, { metalness: 0.8, roughness: 0.3 }) : std(c.skin);
     const shirt = std(c.shirt);
     const pants = std(c.pants);
     const vest = std(c.vest, { roughness: 0.5 });
@@ -156,7 +160,7 @@ export class FighterModel {
     const helmet = std(c.helmet, { roughness: 0.35 });
     const boot = std(0x2a2118);
 
-    const bulk = def.id === 'gerd' ? 1.15 : def.id === 'kim' ? 0.92 : 1;
+    const bulk = def.build;
 
     this.root.add(this.orient);
     this.orient.add(this.hips);
@@ -191,22 +195,19 @@ export class FighterModel {
     const neck = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.07, 0.1, 8), skin);
     neck.position.y = 0.03;
     this.headPivot.add(neck);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 16, 12), skin);
+    const head = new THREE.Mesh(def.robot ? new THREE.BoxGeometry(0.24, 0.24, 0.26) : new THREE.SphereGeometry(0.13, 16, 12), skin);
     head.position.y = 0.17;
-    head.scale.set(1, 1.1, 0.95);
+    if (!def.robot) head.scale.set(1, 1.1, 0.95);
     head.castShadow = true;
     this.headPivot.add(head);
-    const hat = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), helmet);
-    hat.position.y = 0.21;
-    hat.castShadow = true;
-    this.headPivot.add(hat);
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.19, 0.19, 0.02, 16), helmet);
-    brim.position.set(0.03, 0.21, 0);
-    this.headPivot.add(brim);
-    const eyes = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.025, 0.14), new THREE.MeshBasicMaterial({ color: 0x111111 }));
+    this.buildHat(def, helmet);
+    const eyes = new THREE.Mesh(
+      new THREE.BoxGeometry(0.02, def.robot ? 0.05 : 0.025, def.robot ? 0.2 : 0.14),
+      new THREE.MeshBasicMaterial({ color: def.robot ? 0x00e5ff : 0x111111 }),
+    );
     eyes.position.set(0.125, 0.18, 0);
     this.headPivot.add(eyes);
-    if (def.id === 'gerd') {
+    if (def.mustache) {
       const stache = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.035, 0.12), new THREE.MeshStandardMaterial({ color: 0x5a3a20 }));
       stache.position.set(0.13, 0.11, 0);
       this.headPivot.add(stache);
@@ -250,21 +251,119 @@ export class FighterModel {
       legF: legF.upper, kneeF: legF.lower, legB: legB.upper, kneeB: legB.lower,
     };
 
-    // Requisiten
-    if (def.prop === 'scanner') {
-      const scanner = new THREE.Group();
-      scanner.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.06), new THREE.MeshStandardMaterial({ color: 0x222222 })));
-      const lens = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.04, 0.05), new THREE.MeshStandardMaterial({ color: 0xff0000, emissive: 0xff0000, emissiveIntensity: 2 }));
-      lens.position.x = 0.085;
-      scanner.add(lens);
-      scanner.position.set(0.05, -0.04, 0.03);
-      scanner.rotation.z = Math.PI / 2;
-      armF.hand.add(scanner);
-    } else if (def.prop === 'tape') {
-      const tape = new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.03, 8, 16), new THREE.MeshStandardMaterial({ color: 0xc9a46a, roughness: 0.4 }));
-      tape.position.set(0, -0.03, 0.06);
-      armF.hand.add(tape);
+    this.buildProp(def, armF.hand);
+
+    // Stümpfe für den Finisher – erst sichtbar, wenn Kopf oder Arm abfliegen
+    const goreMat = new THREE.MeshStandardMaterial({ color: def.robot ? 0x222222 : 0x8b0000, roughness: 0.4 });
+    const neckStump = new THREE.Mesh(new THREE.CylinderGeometry(0.065, 0.065, 0.02, 10), goreMat);
+    neckStump.position.y = 0.6;
+    const shoulderStump = new THREE.Mesh(new THREE.SphereGeometry(0.062, 8, 6), goreMat);
+    shoulderStump.position.set(0, 0.55, 0.3 * bulk);
+    for (const st of [neckStump, shoulderStump]) {
+      st.visible = false;
+      this.torso.add(st);
+      this.stumps.push(st);
     }
+  }
+
+  private buildHat(def: CharacterDef, mat: THREE.Material) {
+    const add = (geo: THREE.BufferGeometry, x: number, y: number, m = mat) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.position.set(x, y, 0);
+      mesh.castShadow = true;
+      this.headPivot.add(mesh);
+      return mesh;
+    };
+    switch (def.hat) {
+      case 'helmet':
+        add(new THREE.SphereGeometry(0.15, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 0.21);
+        add(new THREE.CylinderGeometry(0.19, 0.19, 0.02, 16), 0.03, 0.21);
+        break;
+      case 'cap':
+        add(new THREE.SphereGeometry(0.14, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), 0, 0.22);
+        add(new THREE.BoxGeometry(0.14, 0.015, 0.2), 0.15, 0.225);
+        break;
+      case 'beanie': {
+        const b = add(new THREE.SphereGeometry(0.145, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), 0, 0.2);
+        b.scale.y = 1.15;
+        add(new THREE.SphereGeometry(0.04, 8, 6), 0, 0.38);
+        break;
+      }
+      case 'none':
+        if (def.robot) {
+          add(new THREE.CylinderGeometry(0.008, 0.008, 0.2, 6), -0.03, 0.38);
+          add(new THREE.SphereGeometry(0.03, 8, 6), -0.03, 0.49, new THREE.MeshBasicMaterial({ color: 0xff1744 }));
+        }
+        break;
+    }
+  }
+
+  private buildProp(def: CharacterDef, hand: THREE.Object3D) {
+    const m = (color: number, extra: THREE.MeshStandardMaterialParameters = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.5, ...extra });
+    const item = new THREE.Group();
+    switch (def.prop) {
+      case 'scanner': {
+        item.add(new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.06), m(0x222222)));
+        const lens = new THREE.Mesh(new THREE.BoxGeometry(0.01, 0.04, 0.05), m(0xff0000, { emissive: 0xff0000, emissiveIntensity: 2 }));
+        lens.position.x = 0.085;
+        item.add(lens);
+        item.position.set(0.05, -0.04, 0.03);
+        item.rotation.z = Math.PI / 2;
+        break;
+      }
+      case 'tape':
+        item.add(new THREE.Mesh(new THREE.TorusGeometry(0.07, 0.03, 8, 16), m(0xc9a46a, { roughness: 0.4 })));
+        item.position.set(0, -0.03, 0.06);
+        break;
+      case 'clipboard': {
+        item.add(new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.3, 0.22), m(0x8d6e63)));
+        const paper = new THREE.Mesh(new THREE.BoxGeometry(0.022, 0.26, 0.19), m(0xffffff));
+        paper.position.y = -0.01;
+        item.add(paper);
+        item.position.set(0.02, -0.1, 0.04);
+        break;
+      }
+      case 'mug': {
+        item.add(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.11, 12), m(0xffffff)));
+        const coffee = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.005, 12), m(0x4e342e));
+        coffee.position.y = 0.055;
+        item.add(coffee);
+        item.position.set(0.02, 0, 0.06);
+        break;
+      }
+      case 'tablet': {
+        item.add(new THREE.Mesh(new THREE.BoxGeometry(0.015, 0.26, 0.18), m(0x212121)));
+        const screen = new THREE.Mesh(new THREE.BoxGeometry(0.017, 0.22, 0.15), m(0x4fc3f7, { emissive: 0x4fc3f7, emissiveIntensity: 1 }));
+        item.add(screen);
+        item.position.set(0.03, -0.08, 0.04);
+        break;
+      }
+      case 'wrench': {
+        const handle = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.3, 0.02), m(0x90a4ae, { metalness: 0.8, roughness: 0.3 }));
+        handle.position.y = -0.1;
+        item.add(handle);
+        const head = new THREE.Mesh(new THREE.TorusGeometry(0.04, 0.015, 6, 12, Math.PI * 1.5), m(0x90a4ae, { metalness: 0.8, roughness: 0.3 }));
+        head.position.y = -0.27;
+        item.add(head);
+        item.position.set(0.02, 0, 0.04);
+        break;
+      }
+      case 'none':
+        return;
+    }
+    hand.add(item);
+  }
+
+  /** Löst Kopf bzw. vorderen Arm vom Körper; der Renderer übernimmt das Teil in die Szene. */
+  detach(part: 'head' | 'arm'): THREE.Object3D {
+    const obj = part === 'head' ? this.headPivot : this.j.armF;
+    this.stumps[part === 'head' ? 0 : 1].visible = true;
+    return obj;
+  }
+
+  /** Weltposition von Hals bzw. Schulter (für den Blutstrahl). */
+  stumpPosition(part: 'head' | 'arm'): THREE.Vector3 {
+    return this.stumps[part === 'head' ? 0 : 1].getWorldPosition(new THREE.Vector3());
   }
 
   hitFlash() {
@@ -273,12 +372,13 @@ export class FighterModel {
 
   /** `smooth`: Online-Snapshots kommen mit 30 Hz – Position weich nachziehen. */
   update(f: Fighter, time: number, dt: number, smooth = false) {
-    const target = new THREE.Vector3(f.x, f.y, 0);
+    const target = new THREE.Vector3(f.x, f.y, 0).add(this.offset);
     if (smooth && this.root.position.distanceTo(target) < 1.5) {
       this.root.position.lerp(target, 1 - Math.pow(0.000001, dt));
     } else {
       this.root.position.copy(target);
     }
+    this.root.rotation.x = this.spin;
     // 3/4-Ansicht zur Kamera, bei Blick nach links gespiegelt
     this.orient.scale.x = f.facing;
     this.orient.rotation.y = -0.35 * f.facing;
@@ -304,7 +404,7 @@ export class FighterModel {
     this.j.kneeB.rotation.z = -p.kneeB;
 
     if (this.flash > 0) {
-      this.flash = Math.max(0, this.flash - dt * 6);
+      this.flash = Math.max(0, this.flash - dt * 20);
     }
     const e = this.flash;
     for (const m of this.flashMats) {

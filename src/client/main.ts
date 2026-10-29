@@ -1,16 +1,17 @@
 import './style.css';
 import { CHARACTERS, getCharacter } from '../shared/characters';
 import { type GameEvent, type GameState, ROUNDS_TO_WIN, TICK_RATE, createGame, step } from '../shared/game';
+import { STAGES, getStage } from '../shared/stages';
 import { CpuController } from './ai';
 import { sfx, unlockAudio } from './audio';
 import { CONTROLS_HELP, initKeyboard, readInput } from './input';
 import { NetClient, createRoom } from './net';
 import { GameRenderer } from './renderer';
 
-type Mode = 'cpu' | 'local' | 'online';
+type Mode = 'arcade' | 'cpu' | 'local' | 'online';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
-const screens = ['menu', 'select', 'lobby', 'result'] as const;
+const screens = ['menu', 'select', 'lobby', 'result', 'pause'] as const;
 function show(screen: (typeof screens)[number] | null) {
   for (const s of screens) $(s).classList.toggle('hidden', s !== screen);
 }
@@ -19,10 +20,12 @@ const renderer = new GameRenderer($<HTMLCanvasElement>('game'));
 initKeyboard();
 $('ctrl1').textContent = CONTROLS_HELP.p1;
 $('ctrl2').textContent = CONTROLS_HELP.p2;
+$('pctrl1').textContent = CONTROLS_HELP.p1;
+$('pctrl2').textContent = CONTROLS_HELP.p2;
 
 // --- Zustand -------------------------------------------------------------
 let mode: Mode = 'cpu';
-let state: GameState = createGame('gerd', 'kim');
+let state: GameState = createGame('gerd', 'kim', 'wareneingang');
 let names: [string, string] = ['', ''];
 let running = false; // true = Kampf läuft (Eingaben/Simulation)
 let cpu: CpuController | null = null;
@@ -30,8 +33,28 @@ let net: NetClient | null = null;
 let mySlot: 0 | 1 = 0;
 let pendingRoom: string | null = null;
 let accumulator = 0;
+let paused = false;
 
-renderer.setFighters(['gerd', 'kim']);
+// Arcade: nacheinander gegen alle anderen Kämpfer, jede Runde in einer anderen Arena
+interface Ladder {
+  player: string;
+  opponents: string[];
+  stages: string[];
+  index: number;
+}
+let ladder: Ladder | null = null;
+
+function shuffle<T>(list: T[]): T[] {
+  const a = [...list];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+const randomStage = () => STAGES[Math.floor(Math.random() * STAGES.length)].id;
+
+state = demoGame();
 
 // --- Banner & HUD ----------------------------------------------------------
 function banner(text: string) {
@@ -62,11 +85,13 @@ function updateHud() {
     Array.from(pips.children).forEach((p, k) => p.classList.toggle('on', k < f.wins));
   });
   $('timer').textContent = String(Math.ceil(state.timer / TICK_RATE));
-  $('netinfo').textContent = net ? `Online · Ping ${net.ping} ms · Du bist Spieler ${mySlot + 1}` : '';
+  const stage = getStage(state.stage).name;
+  const info = ladder ? `Arcade ${ladder.index + 1}/${ladder.opponents.length} · ${stage}` : stage;
+  $('netinfo').textContent = net ? `${stage} · Online · Ping ${net.ping} ms · Du bist Spieler ${mySlot + 1}` : info;
 }
 
 function handleEvents(events: GameEvent[]) {
-  renderer.handleEvents(events);
+  renderer.handleEvents(events, state);
   for (const e of events) {
     switch (e.type) {
       case 'roundStart':
@@ -81,7 +106,8 @@ function handleEvents(events: GameEvent[]) {
         sfx.swing();
         break;
       case 'projectile':
-        if (e.kind === 'laser') sfx.scanner();
+        if (e.kind === 'laser' || e.kind === 'lidar' || e.kind === 'label') sfx.scanner();
+        else if (e.kind === 'wave') sfx.horn();
         else sfx.throw();
         break;
       case 'hit':
@@ -92,7 +118,7 @@ function handleEvents(events: GameEvent[]) {
         sfx.block();
         break;
       case 'ko':
-        banner('FEIERABEND!');
+        banner(e.finisher === 'wall' ? 'AB INS REGAL!' : e.finisher === 'head' ? 'KOPF AB – FEIERABEND!' : 'FEIERABEND!');
         sfx.ko();
         break;
       case 'timeout':
@@ -107,23 +133,57 @@ function handleEvents(events: GameEvent[]) {
 
 function showResult(winner: 0 | 1 | -1) {
   running = false;
+  paused = false;
   let text = 'UNENTSCHIEDEN';
+  let button = 'Revanche';
+  let status = '';
   if (winner !== -1) {
     text = `${names[winner].toUpperCase()} GEWINNT!`;
     if (mode === 'online') text = winner === mySlot ? 'DU GEWINNST!' : 'VERLOREN …';
   }
+  if (ladder) {
+    if (winner === 0 && ladder.index === ladder.opponents.length - 1) {
+      text = 'MITARBEITER DES MONATS!';
+      status = `Du hast alle ${ladder.opponents.length} Gegner in allen Hallen besiegt.`;
+      button = 'Neue Arcade-Runde';
+      ladder.index = -1;
+      ladder.opponents = shuffle(ladder.opponents);
+      ladder.stages = shuffle(ladder.stages);
+    } else if (winner === 0) {
+      const next = getCharacter(ladder.opponents[ladder.index + 1]);
+      status = `Nächster Gegner: ${next.name} in „${getStage(ladder.stages[(ladder.index + 1) % ladder.stages.length]).name}“`;
+      button = 'Nächster Gegner';
+    } else {
+      text = 'SCHICHT VERLOREN …';
+      status = `Gegner ${ladder.index + 1} von ${ladder.opponents.length}. Versuch es noch einmal!`;
+      button = 'Nochmal';
+      ladder.index -= 1;
+    }
+  }
   $('resultText').textContent = text;
-  $('resultStatus').textContent = '';
+  $('resultStatus').textContent = status;
+  $('rematch').textContent = button;
   show('result');
 }
 
 // --- Spielstart ------------------------------------------------------------
-function startLocal(chars: [string, string]) {
-  state = createGame(chars[0], chars[1]);
+function startLocal(chars: [string, string], stage: string, cpuLevel = 0.6) {
+  state = createGame(chars[0], chars[1], stage);
   names = [getCharacter(chars[0]).name, getCharacter(chars[1]).name];
-  if (mode === 'cpu') names[1] += ' (CPU)';
-  cpu = mode === 'cpu' ? new CpuController(1) : null;
+  const vsCpu = mode === 'cpu' || mode === 'arcade';
+  if (vsCpu) names[1] += ' (CPU)';
+  cpu = vsCpu ? new CpuController(1, cpuLevel) : null;
   beginMatch(chars);
+}
+
+function nextArcadeFight() {
+  if (!ladder) return;
+  ladder.index += 1;
+  const i = ladder.index;
+  // CPU wird von Gegner zu Gegner stärker
+  const level = 0.35 + (0.55 * i) / Math.max(1, ladder.opponents.length - 1);
+  startLocal([ladder.player, ladder.opponents[i]], ladder.stages[i % ladder.stages.length], level);
+  banner(`GEGNER ${i + 1}/${ladder.opponents.length}`);
 }
 
 function beginMatch(chars: [string, string]) {
@@ -134,55 +194,101 @@ function beginMatch(chars: [string, string]) {
   $('hud').classList.remove('hidden');
   show(null);
   running = true;
+  paused = false;
   accumulator = 0;
   handleEvents(state.events);
 }
 
 function toMenu() {
   running = false;
+  paused = false;
   renderer.smoothing = false;
   net?.close();
   net = null;
   cpu = null;
+  ladder = null;
   pendingRoom = null;
   $('hud').classList.add('hidden');
   history.replaceState(null, '', location.pathname);
   show('menu');
 }
 
-// --- Charakterauswahl --------------------------------------------------------
+// --- Auswahl (Kämpfer und Arena) ----------------------------------------------
+type SelectStep = 'p1' | 'p2' | 'cpu' | 'stage';
+let steps: SelectStep[] = [];
 let picks: string[] = [];
+let stagePick = '';
+
+const STEP_TITLES: Record<SelectStep, string> = {
+  p1: 'Wähle deinen Lagerarbeiter',
+  p2: 'Spieler 2: Wähle deinen Lagerarbeiter',
+  cpu: 'Wähle deinen CPU-Gegner',
+  stage: 'Wähle die Arena',
+};
 
 function openSelect() {
   picks = [];
-  const title =
-    mode === 'local' ? 'Spieler 1: Wähle deinen Lagerarbeiter' : mode === 'online' ? 'Wähle deinen Kämpfer für das Online-Match' : 'Wähle deinen Lagerarbeiter';
-  $('selectTitle').textContent = title;
-  renderCards();
+  stagePick = '';
+  steps = {
+    arcade: ['p1'],
+    cpu: ['p1', 'cpu', 'stage'],
+    local: ['p1', 'p2', 'stage'],
+    online: pendingRoom ? ['p1'] : ['p1', 'stage'],
+  }[mode] as SelectStep[];
+  renderSelect();
   show('select');
 }
 
-function renderCards() {
-  const icons: Record<string, string> = { gerd: '🏗️', kim: '📟', piet: '📦' };
+function currentStep(): SelectStep {
+  return steps[picks.length + (stagePick ? 1 : 0)] ?? 'p1';
+}
+
+function renderSelect() {
+  const step = currentStep();
+  let title = STEP_TITLES[step];
+  if (step === 'p1' && mode === 'local') title = 'Spieler 1: Wähle deinen Lagerarbeiter';
+  if (step === 'p1' && mode === 'arcade') title = 'Arcade: Wähle deinen Lagerarbeiter – danach warten alle anderen';
+  if (step === 'stage' && mode === 'online') title = 'Wähle die Arena für das Online-Match';
+  $('selectTitle').textContent = title;
   $('cards').innerHTML = '';
+  $('cards').classList.toggle('stages', step === 'stage');
+  if (step === 'stage') renderStageCards();
+  else renderFighterCards();
+}
+
+function renderFighterCards() {
+  const stars = (v: number) => '■'.repeat(Math.max(1, Math.min(5, v))) + '□'.repeat(5 - Math.max(1, Math.min(5, v)));
   for (const c of CHARACTERS) {
     const card = document.createElement('div');
     card.className = 'card';
     const vest = `#${c.colors.vest.toString(16).padStart(6, '0')}`;
-    const stars = (v: number) => '■'.repeat(v) + '□'.repeat(5 - v);
-    const power = Math.round((c.moves.heavy.damage / 120) * 5);
-    const speed = Math.round((c.walkSpeed / 0.075) * 5);
-    const hp = Math.round((c.maxHp / 1150) * 5);
+    const power = Math.round((c.moves.heavy.damage / 135) * 5);
+    const speed = Math.round((c.walkSpeed / 0.082) * 5);
+    const hp = Math.round((c.maxHp / 1250) * 5);
     card.innerHTML = `
-      <div class="swatch" style="background:repeating-linear-gradient(-45deg, ${vest} 0 14px, #222 14px 28px)">${icons[c.id] ?? '👷'}</div>
+      <div class="swatch" style="background:repeating-linear-gradient(-45deg, ${vest} 0 14px, #222 14px 28px)">${c.icon}</div>
       <h3>${c.name}</h3>
       <div class="job">${c.job}</div>
       <div class="bio">${c.bio}</div>
       <div class="stats">Kraft ${stars(power)}<br/>Tempo ${stars(speed)}<br/>Ausdauer ${stars(hp)}<br/>Spezial: ${c.moves.special.name}</div>`;
     picks.forEach((p, i) => {
-      if (p === c.id) card.insertAdjacentHTML('beforeend', `<span class="badge p${i + 1}">P${i + 1}</span>`);
+      if (p === c.id) card.insertAdjacentHTML('beforeend', `<span class="badge p${i + 1}">${steps[i] === 'cpu' ? 'CPU' : `P${i + 1}`}</span>`);
     });
     card.addEventListener('click', () => pick(c.id));
+    $('cards').appendChild(card);
+  }
+}
+
+function renderStageCards() {
+  const all = [...STAGES, { id: 'random', name: 'Zufall', subtitle: 'Überrasch mich', colors: ['#333', '#ffcc00'] as [string, string] }];
+  for (const st of all) {
+    const card = document.createElement('div');
+    card.className = 'card stage';
+    card.innerHTML = `
+      <div class="swatch" style="background:linear-gradient(135deg, ${st.colors[0]} 0 55%, ${st.colors[1]} 55% 100%)">${st.id === 'random' ? '🎲' : ''}</div>
+      <h3>${st.name}</h3>
+      <div class="bio">${st.subtitle}</div>`;
+    card.addEventListener('click', () => pickStage(st.id === 'random' ? randomStage() : st.id));
     $('cards').appendChild(card);
   }
 }
@@ -190,24 +296,34 @@ function renderCards() {
 function pick(id: string) {
   unlockAudio();
   picks.push(id);
-  if (mode === 'local' && picks.length === 1) {
-    $('selectTitle').textContent = 'Spieler 2: Wähle deinen Lagerarbeiter';
-    renderCards();
+  if (mode === 'arcade') {
+    const others = CHARACTERS.filter((c) => c.id !== id).map((c) => c.id);
+    ladder = { player: id, opponents: shuffle(others), stages: shuffle(STAGES.map((st) => st.id)), index: -1 };
+    nextArcadeFight();
     return;
   }
-  if (mode === 'cpu') {
-    const others = CHARACTERS.filter((c) => c.id !== id);
-    picks.push(others[Math.floor(Math.random() * others.length)].id);
+  advance();
+}
+
+function pickStage(id: string) {
+  stagePick = id;
+  advance();
+}
+
+function advance() {
+  if (picks.length + (stagePick ? 1 : 0) < steps.length) {
+    renderSelect();
+    return;
   }
   if (mode === 'online') {
-    void connectOnline(id);
+    void connectOnline(picks[0], stagePick);
     return;
   }
-  startLocal([picks[0], picks[1]]);
+  startLocal([picks[0], picks[1]], stagePick || randomStage());
 }
 
 // --- Online ----------------------------------------------------------------
-async function connectOnline(char: string) {
+async function connectOnline(char: string, stage: string) {
   show('lobby');
   $('lobbyStatus').textContent = 'Verbinde …';
   let room = pendingRoom;
@@ -219,7 +335,7 @@ async function connectOnline(char: string) {
   }
   $('lobbyCode').textContent = room;
   history.replaceState(null, '', `?room=${room}`);
-  net = new NetClient(room, char, getCharacter(char).name, {
+  net = new NetClient(room, char, getCharacter(char).name, stage, {
     onWelcome(slot) {
       mySlot = slot;
       $('lobbyStatus').textContent = slot === 0 ? 'Teile den Code oder Link mit deinem Gegner.' : 'Verbunden – gleich geht es los.';
@@ -227,10 +343,10 @@ async function connectOnline(char: string) {
     onWaiting() {
       if (!running) $('lobbyStatus').textContent = 'Warte auf zweiten Spieler …';
     },
-    onStart(chars, n) {
+    onStart(chars, n, stage) {
       names = [n[0], n[1]];
       names[mySlot] += ' (Du)';
-      state = createGame(chars[0], chars[1]);
+      state = createGame(chars[0], chars[1], stage);
       beginMatch(chars);
     },
     onState(s) {
@@ -255,6 +371,59 @@ async function connectOnline(char: string) {
       $('lobbyStatus').textContent = text;
     },
   });
+}
+
+// --- Pause -------------------------------------------------------------------
+function setPaused(on: boolean) {
+  if (on && (!running || paused)) return;
+  if (!on && !paused) return;
+  paused = on;
+  $('pauseInfo').textContent =
+    mode === 'online' ? 'Online läuft der Kampf weiter – dein Gegner wartet nicht!' : 'Frühstückspause – 15 Minuten, nicht mehr!';
+  $('restart').classList.toggle('hidden', mode === 'online');
+  show(on ? 'pause' : null);
+  last = performance.now();
+}
+
+function loadBloodSetting() {
+  try {
+    return localStorage.getItem('wf-blood') !== 'off';
+  } catch {
+    return true;
+  }
+}
+function applyBlood(on: boolean) {
+  renderer.blood = on;
+  $('toggleBlood').textContent = `Blut: ${on ? 'an' : 'aus'}`;
+  try {
+    localStorage.setItem('wf-blood', on ? 'on' : 'off');
+  } catch {
+    // privater Modus – egal
+  }
+}
+applyBlood(loadBloodSetting());
+
+window.addEventListener('keydown', (e) => {
+  if (e.code === 'Escape' || e.code === 'KeyP') setPaused(!paused);
+});
+$('resume').addEventListener('click', () => setPaused(false));
+$('toggleBlood').addEventListener('click', () => applyBlood(!renderer.blood));
+$('pauseMenu').addEventListener('click', toMenu);
+$('restart').addEventListener('click', () => {
+  paused = false;
+  if (ladder) {
+    ladder.index -= 1;
+    nextArcadeFight();
+  } else {
+    startLocal([state.fighters[0].char, state.fighters[1].char], state.stage);
+  }
+});
+
+let padStartWasDown = false;
+function pollPadPause() {
+  const down = Array.from(navigator.getGamepads?.() ?? []).some((p) => p?.buttons[9]?.pressed);
+  if (down && !padStartWasDown) setPaused(!paused);
+  padStartWasDown = down;
 }
 
 // --- UI-Verdrahtung ----------------------------------------------------------
@@ -292,7 +461,11 @@ $('rematch').addEventListener('click', () => {
     net?.rematch();
     return;
   }
-  startLocal([state.fighters[0].char, state.fighters[1].char]);
+  if (ladder) {
+    nextArcadeFight();
+    return;
+  }
+  startLocal([state.fighters[0].char, state.fighters[1].char], state.stage);
 });
 
 // Direkt-Einladung per Link: ?room=CODE
@@ -312,36 +485,44 @@ let last = performance.now();
 function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
+  pollPadPause();
 
-  if (running && mode !== 'online') {
+  if (paused && mode !== 'online') {
+    // Standbild
+  } else if (running && mode !== 'online') {
     accumulator += dt;
     while (accumulator >= STEP) {
-      const p1 = readInput(0, mode === 'cpu');
-      const p2 = mode === 'cpu' ? cpu!.next(state) : readInput(1, false);
+      const p1 = readInput(0, cpu !== null);
+      const p2 = cpu ? cpu.next(state) : readInput(1, false);
       step(state, [p1, p2]);
       handleEvents(state.events);
       accumulator -= STEP;
     }
   } else if (running && net) {
-    net.sendInput(readInput(mySlot, true));
+    net.sendInput(paused ? 0 : readInput(mySlot, true));
   } else if (!running && $('hud').classList.contains('hidden')) {
     // Hintergrund-Demo im Menü: zwei CPUs prügeln sich
     demo(dt);
   }
 
-  renderer.render(state, dt);
+  renderer.render(state, paused && mode !== 'online' ? 0 : dt);
   if (running) updateHud();
   requestAnimationFrame(frame);
 }
 
 const demoCpu: [CpuController, CpuController] = [new CpuController(0, 0.5), new CpuController(1, 0.5)];
+function demoGame() {
+  const [a, b] = shuffle(CHARACTERS.map((c) => c.id));
+  renderer.setFighters([a, b]);
+  return createGame(a, b, randomStage());
+}
 let demoAcc = 0;
 function demo(dt: number) {
   demoAcc += dt;
   while (demoAcc >= STEP) {
-    if (state.phase === 'matchEnd') state = createGame(state.fighters[0].char, state.fighters[1].char);
+    if (state.phase === 'matchEnd') state = demoGame();
     step(state, [demoCpu[0].next(state), demoCpu[1].next(state)]);
-    renderer.handleEvents(state.events.filter((e) => e.type === 'hit' || e.type === 'block'));
+    renderer.handleEvents(state.events, state);
     demoAcc -= STEP;
   }
 }

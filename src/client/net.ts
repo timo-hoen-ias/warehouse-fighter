@@ -4,7 +4,7 @@ import type { ClientMessage, ServerMessage } from '../shared/protocol';
 export interface NetHandlers {
   onWelcome(slot: 0 | 1, room: string): void;
   onWaiting(): void;
-  onStart(chars: [string, string], names: [string, string]): void;
+  onStart(chars: [string, string], names: [string, string], stage: string): void;
   onState(s: GameState): void;
   onOpponentLeft(): void;
   onRematchRequested(slot: 0 | 1): void;
@@ -24,7 +24,7 @@ export class NetClient {
   private closed = false;
   ping = 0;
 
-  constructor(room: string, private char: string, private name: string, h: NetHandlers) {
+  constructor(room: string, private char: string, private name: string, private stage: string, h: NetHandlers) {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     this.ws = new WebSocket(`${proto}://${location.host}/api/rooms/${room}/ws`);
     this.ws.addEventListener('message', (e) => {
@@ -32,14 +32,14 @@ export class NetClient {
       switch (msg.t) {
         case 'welcome':
           h.onWelcome(msg.slot, msg.room);
-          this.send({ t: 'join', char: this.char, name: this.name });
+          this.send({ t: 'join', char: this.char, name: this.name, stage: this.stage });
           break;
         case 'waiting':
           h.onWaiting();
           break;
         case 'start':
           this.lastInput = -1;
-          h.onStart(msg.chars, msg.names);
+          h.onStart(msg.chars, msg.names, msg.stage);
           break;
         case 'state':
           h.onState(msg.s);
