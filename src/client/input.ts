@@ -11,6 +11,7 @@ const P1: Layout = {
   KeyF: INPUT.LIGHT,
   KeyG: INPUT.HEAVY,
   KeyH: INPUT.SPECIAL,
+  KeyV: INPUT.KICK,
 };
 
 const P2: Layout = {
@@ -24,6 +25,8 @@ const P2: Layout = {
   Numpad1: INPUT.LIGHT,
   Numpad2: INPUT.HEAVY,
   Numpad3: INPUT.SPECIAL,
+  KeyM: INPUT.KICK,
+  Numpad0: INPUT.KICK,
 };
 
 const held = new Set<string>();
@@ -65,8 +68,10 @@ function readGamepad(index: number) {
   if (ay < -0.5 || b(12)) bits |= INPUT.UP;
   if (ay > 0.5 || b(13)) bits |= INPUT.DOWN;
   if (b(2)) bits |= INPUT.LIGHT; // X / Quadrat
-  if (b(3) || b(0)) bits |= INPUT.HEAVY; // Y / Dreieck oder A / Kreuz
+  if (b(3)) bits |= INPUT.HEAVY; // Y / Dreieck
+  if (b(0)) bits |= INPUT.KICK; // A / Kreuz
   if (b(1)) bits |= INPUT.SPECIAL; // B / Kreis
+  if (b(5)) bits |= INPUT.LIGHT | INPUT.KICK; // RB / R1 = Wurf
   return bits;
 }
 
@@ -78,6 +83,6 @@ export function readInput(player: 0 | 1, solo: boolean): number {
 
 /** Kurzhilfe für Menü und HUD. */
 export const CONTROLS_HELP = {
-  p1: 'WASD bewegen · F leicht · G schwer · H Spezial',
-  p2: 'Pfeile bewegen · , leicht · . schwer · - Spezial',
+  p1: 'WASD bewegen · F leicht · G schwer · V Tritt · H Spezial',
+  p2: 'Pfeile bewegen · , leicht · . schwer · M Tritt · - Spezial',
 };

@@ -42,11 +42,12 @@
           <input id="roomInput" maxlength="8" placeholder="RAUMCODE" autocomplete="off" />
           <button data-mode="join">Beitreten</button>
         </div>
+        <button id="retroMenu" class="back">Retro-Filter: mittel</button>
       </div>
       <div class="controls">
         <div><b>Spieler 1</b> <span id="ctrl1"></span></div>
         <div><b>Spieler 2</b> <span id="ctrl2"></span></div>
-        <div>Zurück halten = blocken · Unten + schwer = Tiefschlag (nur geduckt blockbar) · Gamepads werden unterstützt</div>
+        <div>Zurück halten = blocken · 2× vor/zurück = Dash · Leicht + Tritt = Wurf · ← + schwer = Launcher · Kombos: leicht, leicht, schwer · Befehlsliste im Pausenmenü (Esc)</div>
       </div>
     </section>
 
@@ -71,9 +72,14 @@
       <div class="buttons">
         <button id="resume">Weiter</button>
         <button id="restart">Kampf neu starten</button>
+        <button id="toggleMoves">Befehlsliste</button>
         <button id="toggleBlood">Blut: an</button>
+        <button id="retroPause">Retro-Filter: mittel</button>
+        <button id="toggleMusic">Musik: an</button>
+        <button id="toggleAnnouncer">Ansager: an</button>
         <button id="pauseMenu" class="back">Hauptmenü</button>
       </div>
+      <div id="movelist" class="movelist hidden"></div>
       <div class="controls">
         <div><b>Spieler 1</b> <span id="pctrl1"></span></div>
         <div><b>Spieler 2</b> <span id="pctrl2"></span></div>

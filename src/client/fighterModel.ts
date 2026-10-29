@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { type CharacterDef, getCharacter, moveLength } from '../shared/characters';
+import { type CharacterDef, type MoveKey, getCharacter, moveLength } from '../shared/characters';
 import type { Fighter } from '../shared/game';
 
 // Low-Poly-Lagerarbeiter aus Grundkörpern mit prozeduraler Animation.
@@ -7,7 +7,13 @@ import type { Fighter } from '../shared/game';
 
 interface Pose {
   hipY: number;
+  /** Hüfte vor/zurück verschieben (Gewichtsverlagerung, Ausfallschritt) */
+  hipX: number;
+  /** Hüftdrehung um die Hochachse */
+  hipTwist: number;
   lean: number;
+  /** Oberkörperdrehung – bringt Kraft in Schläge */
+  twist: number;
   head: number;
   armF: number;
   foreF: number;
@@ -20,7 +26,7 @@ interface Pose {
 }
 
 const POSE_KEYS = Object.keys({
-  hipY: 0, lean: 0, head: 0, armF: 0, foreF: 0, armB: 0, foreB: 0, legF: 0, kneeF: 0, legB: 0, kneeB: 0,
+  hipY: 0, hipX: 0, hipTwist: 0, lean: 0, twist: 0, head: 0, armF: 0, foreF: 0, armB: 0, foreB: 0, legF: 0, kneeF: 0, legB: 0, kneeB: 0,
 } satisfies Pose) as (keyof Pose)[];
 
 const HIP_HEIGHT = 0.95;
@@ -28,42 +34,94 @@ const UPPER_LEG = 0.45;
 const LOWER_LEG = 0.45;
 const UPPER_ARM = 0.3;
 const LOWER_ARM = 0.3;
+const GETUP_TICKS = 20;
 
 function pose(p: Partial<Pose>): Pose {
-  return { hipY: -0.05, lean: 0.1, head: 0, armF: 0.9, foreF: 1.6, armB: 0.5, foreB: 1.9, legF: 0.35, kneeF: 0.3, legB: -0.3, kneeB: 0.25, ...p };
+  return {
+    hipY: -0.05, hipX: 0, hipTwist: 0, lean: 0.1, twist: 0.15, head: 0,
+    armF: 0.9, foreF: 1.6, armB: 0.5, foreB: 1.9, legF: 0.35, kneeF: 0.3, legB: -0.3, kneeB: 0.25,
+    ...p,
+  };
 }
 
 const P = {
   idle: pose({}),
   crouch: pose({ hipY: -0.42, lean: 0.35, legF: 1.35, kneeF: 2.1, legB: 0.5, kneeB: 2.2, armF: 1.0, foreF: 1.7 }),
-  guard: pose({ lean: -0.1, armF: 1.3, foreF: 2.1, armB: 1.1, foreB: 2.2, head: -0.1 }),
+  guard: pose({ lean: -0.1, twist: 0.3, armF: 1.3, foreF: 2.1, armB: 1.1, foreB: 2.2, head: -0.1 }),
   crouchGuard: pose({ hipY: -0.42, lean: 0.2, legF: 1.35, kneeF: 2.1, legB: 0.5, kneeB: 2.2, armF: 1.3, foreF: 2.1, armB: 1.1, foreB: 2.2 }),
   jump: pose({ hipY: 0, legF: 1.3, kneeF: 1.9, legB: 0.5, kneeB: 1.7, armF: 1.2, foreF: 1.2, armB: 0.2, foreB: 1.0 }),
-  hit: pose({ lean: -0.45, head: -0.35, armF: -0.3, foreF: 0.6, armB: -0.6, foreB: 0.4, legF: 0.5, kneeF: 0.2, legB: -0.4 }),
-  ko: pose({ hipY: -0.75, lean: -1.45, head: -0.2, armF: 2.6, foreF: 0.2, armB: 2.9, foreB: 0.3, legF: 0.3, kneeF: 0.1, legB: 0.1, kneeB: 0.4 }),
-  win: pose({ lean: -0.05, head: -0.2, armF: 2.9, foreF: 0.3, armB: 2.6, foreB: 0.6, legF: 0.25, legB: -0.25 }),
+  hitHigh: pose({ lean: -0.55, head: -0.6, twist: -0.4, armF: -0.2, foreF: 0.5, armB: -0.5, foreB: 0.4, legF: 0.45, kneeF: 0.2, legB: -0.45 }),
+  hitMid: pose({ lean: 0.55, head: 0.35, hipX: -0.08, armF: 1.1, foreF: 1.9, armB: 0.9, foreB: 2.0, legF: 0.5, kneeF: 0.6, legB: -0.2, kneeB: 0.6, hipY: -0.12 }),
+  hitLow: pose({ lean: 0.25, head: 0.15, hipY: -0.18, legF: 0.9, kneeF: 1.2, legB: -0.1, kneeB: 0.9, armF: 0.4, armB: 0.2 }),
+  airborne: pose({ hipY: 0, lean: -1.1, head: -0.4, armF: 2.4, foreF: 0.4, armB: 2.7, foreB: 0.6, legF: 0.9, kneeF: 0.9, legB: 0.4, kneeB: 1.1 }),
+  ko: pose({ hipY: -0.75, lean: -1.45, head: -0.2, twist: 0, armF: 2.6, foreF: 0.2, armB: 2.9, foreB: 0.3, legF: 0.3, kneeF: 0.1, legB: 0.1, kneeB: 0.4 }),
+  win: pose({ lean: -0.05, head: -0.2, twist: 0, armF: 2.9, foreF: 0.3, armB: 2.6, foreB: 0.6, legF: 0.25, legB: -0.25 }),
+  dash: pose({ lean: 0.5, twist: 0.1, hipY: -0.12, legF: 1.1, kneeF: 1.2, legB: -0.9, kneeB: 0.5, armF: 0.9, foreF: 1.9, armB: -0.3, foreB: 1.4 }),
+  backdash: pose({ lean: -0.3, hipY: -0.1, legF: 0.8, kneeF: 0.4, legB: -0.1, kneeB: 0.9, armF: 1.3, foreF: 2.0 }),
 };
 
-/** Ausholen (windup) → Treffer (active), jeweils als Pose. */
-const ATTACKS: Record<string, { windup: Partial<Pose>; strike: Partial<Pose>; base?: Partial<Pose> }> = {
-  light: { windup: { armF: 0.6, foreF: 2.3, lean: 0.05 }, strike: { armF: 1.6, foreF: 0.05, lean: 0.3, armB: 0.7, foreB: 2.1 } },
+type Anim = { windup: Partial<Pose>; strike: Partial<Pose>; base?: Pose };
+
+/** Ausholen (windup) → Treffer (strike) für jeden Move. */
+const ATTACKS: Record<MoveKey, Anim> = {
+  light: { windup: { armF: 0.7, foreF: 2.2, twist: -0.05 }, strike: { armF: 1.6, foreF: 0.05, lean: 0.25, twist: 0.45, hipTwist: 0.1 } },
+  light2: {
+    windup: { armB: 0.4, foreB: 2.3, twist: 0.35 },
+    strike: { armB: 1.62, foreB: 0.05, twist: -0.55, hipTwist: -0.2, lean: 0.3, armF: 0.9, foreF: 2.3 },
+  },
+  finisher: {
+    windup: { armF: 0.3, foreF: 1.5, twist: -0.7, lean: -0.05, hipX: -0.05 },
+    strike: { armF: 1.5, foreF: 0.7, twist: 0.8, hipTwist: 0.3, lean: 0.4, hipX: 0.12, legF: 0.6, kneeF: 0.5 },
+  },
   heavy: {
-    windup: { legF: 1.1, kneeF: 2.0, lean: -0.1 },
-    strike: { legF: 1.6, kneeF: 0.05, lean: -0.35, legB: -0.05, kneeB: 0.1, armF: 0.4, armB: -0.3 },
+    windup: { armB: 0.2, foreB: 2.4, twist: 0.45, lean: -0.05, hipX: -0.05 },
+    strike: { armB: 1.65, foreB: 0, twist: -0.65, hipTwist: -0.25, lean: 0.45, hipX: 0.14, legF: 0.65, kneeF: 0.5, legB: -0.55 },
+  },
+  kick: {
+    windup: { legF: 1.2, kneeF: 2.1, lean: -0.1, hipTwist: 0.25 },
+    strike: { legF: 1.55, kneeF: 0.05, lean: -0.4, hipTwist: 0.55, twist: -0.25, legB: -0.05, kneeB: 0.1, armF: 0.5, armB: -0.3 },
+  },
+  kick2: {
+    windup: { legB: 0.9, kneeB: 2.0, hipTwist: -0.3 },
+    strike: { legB: 2.1, kneeB: 0.05, lean: -0.55, hipTwist: -0.6, twist: 0.3, legF: 0.05, kneeF: 0.15, armB: -0.4 },
   },
   low: {
     base: P.crouch,
-    windup: { legF: 1.1, kneeF: 2.0 },
-    strike: { hipY: -0.55, legF: 1.55, kneeF: 0.0, lean: 0.1, legB: 0.9, kneeB: 2.4 },
+    windup: { legF: 1.1, kneeF: 2.0, hipTwist: 0.3 },
+    strike: { hipY: -0.55, legF: 1.55, kneeF: 0.0, lean: 0.1, legB: 0.9, kneeB: 2.4, hipTwist: -0.4 },
+  },
+  lowLight: { base: P.crouch, windup: { armF: 0.8, foreF: 2.1 }, strike: { armF: 1.35, foreF: 0.1, twist: 0.4, lean: 0.45 } },
+  lowKick: { base: P.crouch, windup: { legF: 1.0, kneeF: 2.2 }, strike: { legF: 1.45, kneeF: 0.1, hipY: -0.45, lean: 0.15 } },
+  fwdLight: {
+    windup: { armF: 0.5, foreF: 2.3, lean: 0 },
+    strike: { armF: 1.62, foreF: 0, lean: 0.55, twist: 0.45, hipX: 0.22, legF: 0.95, kneeF: 0.9, legB: -0.8, kneeB: 0.2 },
+  },
+  fwdKick: { windup: { legF: 1.7, kneeF: 2.3, lean: -0.1 }, strike: { legF: 1.5, kneeF: 0, lean: -0.35, hipX: -0.06, armF: 0.6 } },
+  overhead: {
+    windup: { armF: 3.0, foreF: 0.4, armB: 2.9, foreB: 0.4, lean: -0.3, hipY: 0.02, twist: 0 },
+    strike: { armF: 1.2, foreF: 0.2, armB: 1.1, foreB: 0.2, lean: 0.65, hipY: -0.18, legF: 0.75, kneeF: 0.8, hipX: 0.1 },
+  },
+  launcher: {
+    windup: { hipY: -0.28, armB: -0.2, foreB: 1.6, lean: 0.25, legF: 0.85, kneeF: 1.0, legB: 0.1, kneeB: 0.9, twist: 0.3 },
+    strike: { hipY: 0.06, armB: 2.7, foreB: 0.5, lean: -0.3, twist: -0.55, hipTwist: -0.2, legF: 0.3, kneeF: 0.1, legB: -0.3, kneeB: 0.1 },
   },
   air: {
     base: P.jump,
     windup: { legF: 1.4, kneeF: 2.2 },
     strike: { legF: 0.9, kneeF: 0.0, lean: -0.25, legB: 1.3, kneeB: 2.2, armF: 2.0, armB: 1.2 },
   },
+  airKick: { base: P.jump, windup: { legF: 1.6, kneeF: 2.3, lean: 0.1 }, strike: { legF: 1.25, kneeF: 0, legB: -0.6, kneeB: 1.4, lean: -0.5, hipTwist: 0.4 } },
   special: {
-    windup: { armF: -0.7, foreF: 1.0, armB: -0.9, foreB: 1.0, lean: -0.25 },
-    strike: { armF: 1.55, foreF: 0.1, armB: 1.45, foreB: 0.2, lean: 0.35, legF: 0.6, kneeF: 0.4, legB: -0.5 },
+    windup: { armF: -0.7, foreF: 1.0, armB: -0.9, foreB: 1.0, lean: -0.25, twist: 0.4 },
+    strike: { armF: 1.55, foreF: 0.1, armB: 1.45, foreB: 0.2, lean: 0.35, twist: -0.2, legF: 0.6, kneeF: 0.4, legB: -0.5 },
+  },
+  rush: {
+    windup: { lean: 0.1, hipY: -0.15, twist: 0.4, kneeF: 0.8, kneeB: 0.7 },
+    strike: { lean: 0.8, twist: 0.7, armF: 0.3, foreF: 2.3, armB: -0.4, legF: 1.05, kneeF: 1.0, legB: -0.95, kneeB: 0.3, hipX: 0.15, hipY: -0.1 },
+  },
+  throw: {
+    windup: { armF: 1.4, foreF: 0.6, armB: 1.3, foreB: 0.7, lean: 0.3 },
+    strike: { armF: 2.8, foreF: 0.3, armB: 2.7, foreB: 0.3, lean: -0.4, twist: -0.5, hipTwist: -0.3 },
   },
 };
 
@@ -83,37 +141,58 @@ function targetPose(f: Fighter, def: CharacterDef, t: number): Pose {
     case 'walk': {
       const ph = t * 9 * (def.walkSpeed / 0.06);
       const s = Math.sin(ph) * f.facing * Math.sign(f.vx || 1);
-      return mix(P.idle, { legF: 0.35 + s * 0.45, legB: -0.3 - s * 0.45, kneeF: 0.35 + Math.max(0, -s) * 0.6, kneeB: 0.3 + Math.max(0, s) * 0.6, hipY: -0.05 - Math.abs(Math.cos(ph)) * 0.03 }, 1);
+      return mix(P.idle, {
+        legF: 0.35 + s * 0.45, legB: -0.3 - s * 0.45,
+        kneeF: 0.35 + Math.max(0, -s) * 0.6, kneeB: 0.3 + Math.max(0, s) * 0.6,
+        hipY: -0.05 - Math.abs(Math.cos(ph)) * 0.035,
+        twist: 0.15 + s * 0.12, hipTwist: -s * 0.08,
+        armB: 0.5 - s * 0.2, foreF: 1.6 + s * 0.15,
+      }, 1);
     }
+    case 'dash': {
+      const ph = t * 16;
+      return mix(P.dash, { legF: 1.1 + Math.sin(ph) * 0.4, legB: -0.9 - Math.sin(ph) * 0.4 }, 1);
+    }
+    case 'backdash':
+      return P.backdash;
     case 'crouch':
       return f.guarding ? P.crouchGuard : P.crouch;
     case 'jump':
-      return P.jump;
-    case 'hitstun':
-      return mix(P.hit, {}, 1);
+      return f.vy > 0.05 ? mix(P.jump, { legF: 0.8, kneeF: 1.0, legB: 0.1, kneeB: 0.8 }, 0.6) : P.jump;
+    case 'hitstun': {
+      if (f.launched || f.y > 0.05) return mix(P.airborne, { lean: -1.1 - Math.min(0.5, n * 0.02) }, 1);
+      const base = f.lastHit === 'high' ? P.hitHigh : f.lastHit === 'low' ? P.hitLow : P.hitMid;
+      // Nach dem Treffer langsam zurück in die Grundhaltung
+      return mix(base, P.idle, Math.max(0, Math.min(1, (n - f.stun * 0.5) / Math.max(1, f.stun * 0.5))));
+    }
     case 'blockstun':
-      return f.crouching ? P.crouchGuard : P.guard;
+      return mix(f.crouching ? P.crouchGuard : P.guard, { hipX: -0.06, lean: f.crouching ? 0.1 : -0.2 }, 1);
+    case 'down':
     case 'ko':
       return P.ko;
+    case 'getup':
+      return mix(P.ko, P.crouch, easeOut(Math.min(1, n / GETUP_TICKS)));
     case 'win': {
       const b = Math.abs(Math.sin(t * 6)) * 0.12;
       return mix(P.win, { hipY: -0.05 + b, armF: 2.9 - b * 2 }, 1);
     }
     case 'attack': {
       const m = def.moves[f.move!];
-      const anim = ATTACKS[f.move!];
-      const base = anim.base ? pose(anim.base) : P.idle;
+      const anim = ATTACKS[f.move!] ?? ATTACKS.light;
+      const base = anim.base ?? P.idle;
       const windup = mix(base, anim.windup, 1);
       const strike = mix(windup, anim.strike, 1);
       if (n < m.startup) return mix(base, anim.windup, easeOut(n / m.startup));
-      if (n < m.startup + m.active + 2) return mix(windup, anim.strike, Math.min(1, (n - m.startup + 1) / 2));
-      const r = (n - m.startup - m.active - 2) / Math.max(1, moveLength(m) - m.startup - m.active - 2);
+      if (n < m.startup + m.active + 3) return mix(windup, anim.strike, Math.min(1, (n - m.startup + 1) / 2));
+      const r = (n - m.startup - m.active - 3) / Math.max(1, moveLength(m) - m.startup - m.active - 3);
       return mix(strike, base, easeOut(Math.min(1, r)));
     }
     default: {
       if (f.guarding) return P.guard;
+      // Kampfhaltung: atmen, Gewicht verlagern, leicht wippen
       const b = Math.sin(t * 4) * 0.025;
-      return mix(P.idle, { hipY: -0.05 + b, foreF: 1.6 + b * 4 }, 1);
+      const sway = Math.sin(t * 1.7);
+      return mix(P.idle, { hipY: -0.05 + b, foreF: 1.6 + b * 4, hipX: sway * 0.03, twist: 0.15 + sway * 0.06, head: sway * 0.04 }, 1);
     }
   }
 }
@@ -140,6 +219,7 @@ export class FighterModel {
   private headPivot = new THREE.Group();
   private j: Record<'armF' | 'foreF' | 'armB' | 'foreB' | 'legF' | 'kneeF' | 'legB' | 'kneeB', THREE.Group>;
   private current: Pose = { ...P.idle };
+  private velocity: Pose = pose({ hipY: 0, lean: 0, twist: 0, armF: 0, foreF: 0, armB: 0, foreB: 0, legF: 0, kneeF: 0, legB: 0, kneeB: 0 });
   private flashMats: THREE.MeshStandardMaterial[] = [];
   private flash = 0;
   readonly def: CharacterDef;
@@ -383,14 +463,26 @@ export class FighterModel {
     this.orient.scale.x = f.facing;
     this.orient.rotation.y = -0.35 * f.facing;
 
+    // Gelenke folgen der Zielpose als gedämpfte Federn – gibt Schwung und leichtes Nachfedern
     const goal = targetPose(f, this.def, time);
-    const speed = f.status === 'attack' || f.status === 'hitstun' ? 0.6 : f.status === 'ko' ? 0.15 : 0.25;
-    const k = 1 - Math.pow(1 - speed, dt * 60);
-    for (const key of POSE_KEYS) this.current[key] += (goal[key] - this.current[key]) * k;
+    const stiffness = f.status === 'attack' ? 1100 : f.status === 'hitstun' ? 1400 : f.status === 'ko' || f.status === 'down' ? 120 : 320;
+    const damping = 2 * Math.sqrt(stiffness) * (f.status === 'attack' ? 0.7 : 0.8);
+    const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
+    const h = dt / steps;
+    for (let i = 0; i < steps; i++) {
+      for (const key of POSE_KEYS) {
+        const v = this.velocity[key] + ((goal[key] - this.current[key]) * stiffness - this.velocity[key] * damping) * h;
+        this.velocity[key] = v;
+        this.current[key] += v * h;
+      }
+    }
 
     const p = this.current;
     this.hips.position.y = HIP_HEIGHT + p.hipY;
+    this.hips.position.x = p.hipX;
+    this.hips.rotation.y = p.hipTwist;
     this.hips.rotation.z = -p.lean * 0.3;
+    this.torso.rotation.y = p.twist - p.hipTwist * 0.5;
     this.torso.rotation.z = -p.lean * 0.7;
     this.headPivot.rotation.z = -p.head;
     this.j.armF.rotation.z = p.armF;
