@@ -79,6 +79,7 @@ Vite leitet `/api` (inkl. WebSockets) an den lokalen Worker weiter, d. h. Online
 lassen sich lokal mit zwei Browserfenstern testen.
 
 Alternativ alles in einem Prozess wie in Produktion: `npm run preview` → http://localhost:8787
+(`wrangler.jsonc` enthält einen Build-Schritt, Wrangler baut das Frontend also selbst).
 
 Weitere Befehle: `npm run typecheck`, `npm test` (Unit-Tests der Spiellogik).
 
@@ -92,7 +93,7 @@ Durable Objects auf SQLite-Basis laufen auch im kostenlosen Workers-Plan.
 
 ```bash
 npx wrangler login
-npm run deploy         # = vite build && wrangler deploy
+npm run deploy         # = wrangler deploy (baut vorher automatisch das Frontend)
 ```
 
 Danach läuft das Spiel unter `https://warehouse-fighter.<dein-subdomain>.workers.dev`.
@@ -108,8 +109,11 @@ sobald im Repo unter *Settings → Secrets and variables → Actions* diese Secr
 
 Ohne Secrets wird der Deploy-Schritt einfach übersprungen.
 
-Alternativ: im Cloudflare-Dashboard *Workers & Pages → Create → Import a repository* wählen,
-dieses Repo verbinden, Build-Befehl `npm run build`, Deploy-Befehl `npx wrangler deploy`.
+Alternativ: im Cloudflare-Dashboard *Workers & Pages → Create → Import a repository* wählen
+(Workers Builds) und dieses Repo verbinden. Die Standardbefehle (`npx wrangler deploy` bzw. für
+PR-Branches `npx wrangler versions upload`) reichen, weil `wrangler.jsonc` das Frontend vorher selbst baut.
+Hinweis: Preview-Builds für PRs klappen erst, wenn `main` einmal erfolgreich deployt wurde
+(das Durable Object braucht beim ersten Mal ein echtes `wrangler deploy`).
 
 ## Architektur
 
