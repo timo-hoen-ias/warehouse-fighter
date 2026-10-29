@@ -57,9 +57,14 @@ export class CpuController {
       s.projectiles.some((p) => p.owner !== this.slot && Math.sign(me.x - p.x) === Math.sign(p.vx) && Math.abs(me.x - p.x) < 3.5);
     if (incoming && free && !this.current && this.reaction <= 0 && Math.random() < this.level * 0.55) {
       const projectile = s.projectiles.some((p) => p.owner !== this.slot);
-      if (projectile && Math.random() < 0.3) return this.start([{ bits: INPUT.UP | toward, ticks: 30 }]);
+      if (projectile && Math.random() < 0.3 + this.level * 0.25) return this.start([{ bits: INPUT.UP | toward, ticks: 30 }]);
       if (!projectile && Math.random() < 0.15 * this.level) return this.start(this.backdash(away));
       return this.start([{ bits: away | (this.isLow(op.move, moves) ? INPUT.DOWN : 0), ticks: 12 }]);
+    }
+
+    // Gegner wirft aus der Distanz: in seine Erholung hineindashen und bestrafen
+    if (free && !this.current && op.status === 'attack' && op.move === 'special' && dist > 2.2 && Math.random() < 0.25 + this.level * 0.5) {
+      return this.start([...this.dash(toward), { bits: toward, ticks: 6 }]);
     }
 
     if (this.current || this.plan.length) return this.tick();

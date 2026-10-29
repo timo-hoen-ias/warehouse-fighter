@@ -65,6 +65,21 @@ describe('Simulation', () => {
     expect(s.fighters[1].hp).toBe(getCharacter('gerd').maxHp - getCharacter('kim').moves.special.damage);
   });
 
+  it('Fernangriff lässt sich nicht spammen (Abklingzeit, schwächer als Nahkampf)', () => {
+    const s = fightReady('ingrid', 'gerd');
+    let shots = 0;
+    // 3 Sekunden lang Spezial im Dauerfeuer
+    for (let i = 0; i < 180; i++) {
+      step(s, [i % 2 ? INPUT.SPECIAL : 0, 0]);
+      shots += s.events.filter((e) => e.type === 'projectile').length;
+    }
+    expect(shots).toBeLessThanOrEqual(2);
+    for (const c of ['gerd', 'kim', 'piet', 'lena', 'ludger', 'paul', 'ingrid', 'kalle', 'rita', 'robo']) {
+      const m = getCharacter(c).moves;
+      expect(m.special.damage).toBeLessThan(m.heavy.damage);
+    }
+  });
+
   it('Kämpfer können sich nicht durchdringen und bleiben in der Arena', () => {
     const s = fightReady();
     run(s, 300, [INPUT.RIGHT, INPUT.LEFT]);

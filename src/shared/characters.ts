@@ -111,7 +111,21 @@ function special(
   knockback: number,
   projectile: ProjectileDef,
 ): MoveDef {
-  return { name, startup, active: 1, recovery, damage, hitstun, blockstun, knockback, height: 'mid', hitbox: { x: 0, y: 0, w: 0, h: 0 }, projectile };
+  // Fernangriffe gezielt schwächer als Nahkampf: weniger Schaden, längere Erholung (bestrafbar),
+  // kürzerer Blockstun – sonst gewinnt, wer nur aus der Distanz wirft.
+  return {
+    name,
+    startup,
+    active: 1,
+    recovery: recovery + 10,
+    damage: Math.round(damage * 0.6),
+    hitstun,
+    blockstun: Math.round(blockstun * 0.7),
+    knockback,
+    height: 'mid',
+    hitbox: { x: 0, y: 0, w: 0, h: 0 },
+    projectile,
+  };
 }
 
 
@@ -145,7 +159,7 @@ function buildMoves(base: Record<BaseMoveKey, MoveDef>, names: string[]): Record
     overhead: { ...mv(n.overhead, [Hv.startup + 5, 5, Hv.recovery + 2], r(Hv.damage * 0.9), [Hv.hitstun, Hv.blockstun], 0.08, 'high', [0.3, 0.6, Hv.hitbox.w * 0.9, 1.1], 0.02), knockdown: true },
     launcher: { ...mv(n.launcher, [Hv.startup - 1, 4, Hv.recovery + 4], r(Hv.damage * 0.65), [40, Hv.blockstun], 0.008, 'mid', [0.25, 0.9, 0.8, 0.95]), launch: 0.21 },
     airKick: mv(n.airKick, [base.air.startup + 1, base.air.active, base.air.recovery], r(base.air.damage * 1.05), [base.air.hitstun, base.air.blockstun], 0.12, 'high', [0.15, 0, base.air.hitbox.w + 0.1, 0.55]),
-    rush: { ...mv(n.rush, [12, 12, 22], r(base.special.damage * 1.1), [30, 14], 0.16, 'mid', [0.2, 0.5, 0.8, 1.0], 0.15), knockdown: true },
+    rush: { ...mv(n.rush, [12, 12, 22], r(base.special.damage * 1.8), [30, 14], 0.16, 'mid', [0.2, 0.5, 0.8, 1.0], 0.15), knockdown: true },
     throw: { ...mv(n.throw, [5, 2, 26], r(Hv.damage * 1.2), [30, 0], 0.12, 'mid', [0.05, 0.3, 0.95, 1.3]), knockdown: true, grab: true },
   };
 }
