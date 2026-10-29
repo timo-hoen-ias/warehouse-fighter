@@ -51,14 +51,40 @@ Gefahrgutlager (rotierende Warnleuchten) · Black Friday Peak Season (Paketberg,
 - **Pause:** `Esc`, `P` oder Start am Gamepad. Dort lässt sich das Blut auch abschalten (wird im Browser gespeichert).
   Online läuft der Kampf während der Pause weiter.
 
+## Kampfsystem (Tekken-Stil)
+
+Jeder Kämpfer hat **18 Moves** mit eigenen Namen. Die komplette **Befehlsliste** steht im Pausenmenü.
+
+- **Kombos:** Angriffe lassen sich bei Treffer in den nächsten Angriff abbrechen, z. B. *Leicht, Leicht, Schwer*,
+  *Leicht, Tritt, Tritt*, *Schwer, Tritt* oder *↓ Leicht, ↓ Leicht, ↓ Tritt*. Ein Eingabepuffer verzeiht knappes Timing,
+  mit jedem Treffer in der Kombo sinkt der Schaden etwas.
+- **Launcher (← + Schwer)** schleudert den Gegner hoch, danach sind **Juggles** in der Luft möglich.
+- **Würfe (Leicht + Tritt nah am Gegner)** gehen durch den Block, **Feger (↓ + Schwer)** und **Überkopf (→ + Schwer)**
+  werfen zu Boden. Am Boden liegt man kurz unverwundbar und steht dann auf.
+- **Dash:** zweimal vor tippen, **Rückwärts-Dash:** zweimal zurück.
+- Die CPU nutzt Kombos, Launcher, Würfe und Dashs, blockt tief und hoch.
+
+## Grafik und Sound
+
+- **Animationen** über federnde Gelenke: Ausholen, Durchziehen, Gewichtsverlagerung, Treffer- und Sturzreaktionen.
+- **Live-Schatten:** Die Sonne folgt dem Kampf mit einem engen, scharfen Schattenbereich, dazu schwenkt ein Hallenstrahler
+  über die Kampffläche.
+- **Retro-Pixelfilter** (aus / leicht / mittel / stark, im Hauptmenü und im Pausenmenü): niedrigere Auflösung, reduzierte
+  Farben, Dithering und Scanlines.
+- **Sound** komplett synthetisiert: geschichtete Treffer je nach Gewicht, Hallenhall, Klonk beim Blocken, Aufprall beim
+  Knockdown, eigener Klang je Geschoss, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
+- **90er-Arcade-Musik** im Hauptmenü und im Kampf. Musik und Ansager lassen sich im Pausenmenü abschalten.
+
 ## Steuerung
 
 | Aktion | Spieler 1 | Spieler 2 | Gamepad |
 | --- | --- | --- | --- |
 | Bewegen / Springen / Ducken | `W A S D` | Pfeiltasten | Stick / D-Pad |
 | Leichter Angriff | `F` | `,` | X / □ |
-| Schwerer Angriff | `G` | `.` | Y / △ oder A / ✕ |
+| Schwerer Angriff | `G` | `.` | Y / △ |
+| Tritt | `V` | `M` | A / ✕ |
 | Spezial | `H` | `-` | B / ○ |
+| Wurf | `F` + `V` | `,` + `M` | RB / R1 |
 
 - **Blocken:** vom Gegner weg halten. Tiefschläge müssen **geduckt**, Sprungangriffe **stehend** geblockt werden.
 - Gegen CPU und online funktionieren beide Tastaturbelegungen.
@@ -144,7 +170,7 @@ dafür spürt man die Latenz zum nächsten Cloudflare-Standort (in Europa typisc
 
 - Rollback-Netcode bzw. Client-Prediction für weniger spürbare Latenz
 - Super-Angriff mit „Schicht-Meter“ (z. B. Gerd fährt mit dem Stapler durchs Bild)
-- Würfe/Griffe, Combos mit Cancel-Fenstern, Knockdown + Aufstehen
+- Wand-Kombos, Konter und Seitwärtsschritt (Tekken-Sidestep)
 - Richtige 3D-Modelle (glTF) mit Animationen statt Grundkörpern
 - Matchmaking-Queue statt nur Raumcodes, Ranglisten via D1
 - Touch-Steuerung für Smartphones

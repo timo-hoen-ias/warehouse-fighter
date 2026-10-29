@@ -134,7 +134,7 @@ export class MatchRoom extends DurableObject<Env> {
       }
       case 'input':
         if (Number.isInteger(msg.i)) {
-          const bits = msg.i & 0x7f;
+          const bits = msg.i & 0xff;
           this.taps[slot] |= bits & ~this.inputs[slot];
           this.inputs[slot] = bits;
         }

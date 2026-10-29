@@ -143,3 +143,105 @@ describe('Finisher', () => {
     expect(s.slowmo).toBe(0);
   });
 });
+
+describe('Tekken-System', () => {
+  function press(s: GameState, bits: number, holdTicks: number, p2 = 0) {
+    step(s, [bits, p2]);
+    run(s, holdTicks, [0, p2]);
+  }
+
+  it('Kette Leicht, Leicht, Schwer trifft dreimal', () => {
+    const s = fightReady();
+    placeClose(s);
+    const hits: number[] = [];
+    const record = () => s.events.forEach((e) => e.type === 'hit' && hits.push(e.combo));
+    for (const bits of [INPUT.LIGHT, INPUT.LIGHT, INPUT.HEAVY]) {
+      step(s, [bits, 0]);
+      record();
+      for (let i = 0; i < 9; i++) {
+        step(s, [0, 0]);
+        record();
+      }
+    }
+    run(s, 20);
+    expect(hits).toEqual([1, 2, 3]);
+    expect(s.fighters[0].move === 'finisher' || hits.length === 3).toBe(true);
+  });
+
+  it('Launcher schleudert hoch, Juggle-Treffer, Landung im Knockdown', () => {
+    const s = fightReady();
+    placeClose(s);
+    // Spieler 1 schaut nach rechts: zurück = links
+    press(s, INPUT.LEFT | INPUT.HEAVY, 0);
+    let launched = false;
+    for (let i = 0; i < 20; i++) {
+      step(s, [0, 0]);
+      if (s.fighters[1].y > 0.3) launched = true;
+    }
+    expect(launched).toBe(true);
+    // warten, bis der Angreifer frei ist und der Gegner herunterfällt
+    let guard = 0;
+    while ((s.fighters[0].status !== 'idle' || s.fighters[1].y > 1.6 || s.fighters[1].vy > 0) && guard++ < 200) step(s, [0, 0]);
+    s.fighters[0].x = s.fighters[1].x - 0.8;
+    step(s, [INPUT.LIGHT, 0]);
+    let juggled = s.events.some((e) => e.type === 'hit' && e.combo === 2);
+    let down = false;
+    for (let i = 0; i < 80; i++) {
+      step(s, [0, 0]);
+      if (s.events.some((e) => e.type === 'hit' && e.combo === 2)) juggled = true;
+      if (s.fighters[1].status === 'down') down = true;
+    }
+    expect(juggled).toBe(true);
+    expect(down).toBe(true);
+  });
+
+  it('Wurf geht durch den Block und wirft zu Boden', () => {
+    const s = fightReady();
+    placeClose(s);
+    step(s, [INPUT.LIGHT | INPUT.KICK, INPUT.RIGHT]);
+    expect(s.fighters[0].move).toBe('throw');
+    let down = false;
+    for (let i = 0; i < 80; i++) {
+      step(s, [0, INPUT.RIGHT]);
+      if (s.fighters[1].status === 'down') down = true;
+    }
+    expect(down).toBe(true);
+    expect(s.fighters[1].hp).toBe(1000 - getCharacter('piet').moves.throw.damage);
+  });
+
+  it('Am Boden ist man unverwundbar und steht wieder auf', () => {
+    const s = fightReady();
+    placeClose(s);
+    press(s, INPUT.DOWN | INPUT.HEAVY, 0, 0);
+    let guard = 0;
+    while (s.fighters[1].status !== 'down' && guard++ < 80) step(s, [INPUT.DOWN, 0]);
+    expect(s.fighters[1].status).toBe('down');
+    const hp = s.fighters[1].hp;
+    s.fighters[0].x = s.fighters[1].x - 0.8;
+    step(s, [INPUT.LIGHT, 0]);
+    run(s, 10);
+    expect(s.fighters[1].hp).toBe(hp);
+    run(s, 80);
+    expect(s.fighters[1].status).toBe('idle');
+  });
+
+  it('Doppeltipp vorwärts startet einen Dash', () => {
+    const s = fightReady();
+    step(s, [INPUT.RIGHT, 0]);
+    run(s, 3);
+    step(s, [INPUT.RIGHT, 0]);
+    expect(s.fighters[0].status).toBe('dash');
+    expect(s.fighters[0].vx).toBeGreaterThan(0.1);
+  });
+
+  it('jeder Kämpfer hat die komplette Moveliste', () => {
+    for (const id of ['gerd', 'kim', 'piet', 'lena', 'ludger', 'paul', 'ingrid', 'kalle', 'rita', 'robo']) {
+      const moves = getCharacter(id).moves;
+      expect(Object.keys(moves).length).toBe(18);
+      for (const m of Object.values(moves)) {
+        expect(m.name.length).toBeGreaterThan(2);
+        expect(m.startup).toBeGreaterThan(0);
+      }
+    }
+  });
+});

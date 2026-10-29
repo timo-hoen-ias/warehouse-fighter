@@ -97,3 +97,18 @@ button.back { background: #455a64; color: #fff; }
   80% { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(0.9); }
 }
+
+.movelist { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; max-width: 900px; width: calc(100% - 32px); max-height: 46vh; overflow-y: auto; font-family: system-ui, sans-serif; font-size: 13px; }
+.movelist.hidden { display: none; }
+.movelist h3 { margin: 0 0 6px; color: var(--yellow); font-size: 15px; }
+.movelist table { width: 100%; border-collapse: collapse; }
+.movelist td { padding: 3px 6px; border-bottom: 1px solid rgba(255, 255, 255, 0.08); color: #cfd8dc; }
+.movelist td.in { color: #fff; font-weight: 600; white-space: nowrap; }
+.movelist td.tag { color: #ff8a65; font-size: 11px; text-align: right; white-space: nowrap; }
+.movelist .combos { grid-column: 1 / -1; color: #b0bec5; line-height: 1.6; }
+.movelist .combos b { color: var(--yellow); }
+#pause.moves { justify-content: flex-start; gap: 12px; }
+#pause.moves .buttons { flex-direction: row; flex-wrap: wrap; justify-content: center; width: min(900px, 100%); gap: 6px; }
+#pause.moves .buttons button { font-size: 13px; padding: 6px 10px; }
+#pause.moves .controls { display: none; }
+#pause.moves .movelist { max-height: none; flex: 1; min-height: 0; }

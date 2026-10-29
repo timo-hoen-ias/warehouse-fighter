@@ -65,6 +65,54 @@ export class GameRenderer {
   smoothing = false;
   /** Bluteffekte an/aus (Pausenmenü). */
   blood = true;
+  /** Retro-Pixelfilter: 0 = aus, 1 = leicht, 2 = mittel, 3 = stark. */
+  retro = 0;
+  private retroTarget: THREE.WebGLRenderTarget | null = null;
+  private retroScene = new THREE.Scene();
+  private retroCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+  private retroMat = new THREE.ShaderMaterial({
+    uniforms: {
+      tDiffuse: { value: null },
+      resolution: { value: new THREE.Vector2(1, 1) },
+      levels: { value: 32 },
+      dither: { value: 0 },
+      scan: { value: 0 },
+    },
+    vertexShader: /* glsl */ `
+      varying vec2 vUv;
+      void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }`,
+    fragmentShader: /* glsl */ `
+      uniform sampler2D tDiffuse;
+      uniform vec2 resolution;
+      uniform float levels;
+      uniform float dither;
+      uniform float scan;
+      varying vec2 vUv;
+      float bayer(vec2 p) {
+        // 4x4-Bayer-Matrix für geordnetes Dithering wie auf alten Konsolen
+        int x = int(mod(p.x, 4.0));
+        int y = int(mod(p.y, 4.0));
+        int i = x + y * 4;
+        float m[16] = float[16](0.,8.,2.,10.,12.,4.,14.,6.,3.,11.,1.,9.,15.,7.,13.,5.);
+        for (int k = 0; k < 16; k++) if (k == i) return m[k] / 16.0;
+        return 0.0;
+      }
+      void main() {
+        gl_FragColor = texture2D(tDiffuse, vUv);
+        #include <tonemapping_fragment>
+        #include <colorspace_fragment>
+        vec2 px = floor(vUv * resolution);
+        vec3 c = gl_FragColor.rgb * levels + (bayer(px) - 0.5) * dither;
+        c = floor(c + 0.5) / levels;
+        // Scanlines innerhalb jedes großen Pixels
+        float fy = fract(vUv.y * resolution.y);
+        c *= 1.0 - scan * smoothstep(0.55, 1.0, abs(fy - 0.5) * 2.0);
+        // leichte Röhren-Vignette
+        vec2 d = vUv - 0.5;
+        c *= 1.0 - dot(d, d) * scan * 0.9;
+        gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
+      }`,
+  });
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -83,6 +131,39 @@ export class GameRenderer {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    this.retroSize = '';
+  }
+
+  private retroSize = '';
+
+  /** Szene in niedriger Auflösung rendern und mit Farbreduktion, Dithering und Scanlines hochskalieren. */
+  private renderRetro() {
+    const preset = [null, { px: 2, levels: 40, dither: 0, scan: 0 }, { px: 3, levels: 18, dither: 0.6, scan: 0.25 }, { px: 4.5, levels: 8, dither: 1, scan: 0.4 }][this.retro];
+    if (!preset) {
+      this.renderer.render(this.scene, this.camera);
+      return;
+    }
+    const w = Math.max(64, Math.floor(window.innerWidth / preset.px));
+    const h = Math.max(48, Math.floor(window.innerHeight / preset.px));
+    const key = `${w}x${h}`;
+    if (!this.retroTarget) {
+      this.retroTarget = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, samples: 0 });
+      this.retroScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), this.retroMat));
+    }
+    if (this.retroSize !== key) {
+      this.retroTarget.setSize(w, h);
+      this.retroSize = key;
+    }
+    const u = this.retroMat.uniforms;
+    u.tDiffuse.value = this.retroTarget.texture;
+    u.resolution.value.set(w, h);
+    u.levels.value = preset.levels;
+    u.dither.value = preset.dither;
+    u.scan.value = preset.scan;
+    this.renderer.setRenderTarget(this.retroTarget);
+    this.renderer.render(this.scene, this.camera);
+    this.renderer.setRenderTarget(null);
+    this.renderer.render(this.retroScene, this.retroCam);
   }
 
   setStage(id: string) {
@@ -95,6 +176,8 @@ export class GameRenderer {
   setFighters(chars: [string, string]) {
     this.chars = chars;
     this.clearFinisher();
+    for (const d of this.decals) this.scene.remove(d.mesh);
+    this.decals = [];
     for (const m of this.fighters) this.scene.remove(m.root);
     this.fighters = chars.map((c) => {
       const m = new FighterModel(c);
@@ -416,7 +499,8 @@ export class GameRenderer {
     const sy = (Math.random() - 0.5) * this.shake;
     this.camera.position.set(this.camX + sx, 2.0 + sy + this.camDist * 0.06, this.camDist + lookZ);
     this.camera.lookAt(this.camX, lookY, lookZ);
+    this.stage?.focus(focusX, lookZ, this.time);
 
-    this.renderer.render(this.scene, this.camera);
+    this.renderRetro();
   }
 }

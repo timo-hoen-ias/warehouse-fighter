@@ -9,6 +9,8 @@ export interface BuiltStage {
   /** Wo ein Kämpfer beim Finisher „gegen die Wand“ einschlägt (z-Koordinate). */
   impactZ: number;
   update(time: number, dt: number): void;
+  /** Live-Schatten: Sonne und Hallenstrahler folgen dem Kampfgeschehen. */
+  focus(x: number, z: number, time: number): void;
   dispose(): void;
 }
 
@@ -156,6 +158,9 @@ class Builder {
   readonly wood = new THREE.MeshStandardMaterial({ color: 0xc8a165, roughness: 0.9 });
   readonly boxGeo = new THREE.BoxGeometry(1, 1, 1);
   impactZ = -5.3;
+  sun: THREE.DirectionalLight | null = null;
+  sunOffset = new THREE.Vector3(4, 12, 8);
+  spot: THREE.SpotLight | null = null;
 
   constructor(private scene: THREE.Scene, boxBase?: string) {
     this.boxMats = ['ZERBRECHLICH', 'LIEFERUNG', 'ART. 4711', 'EILT!'].map(
@@ -192,12 +197,30 @@ class Builder {
     this.scene.fog = new THREE.Fog(o.fogColor ?? o.bg, o.fog[0], o.fog[1]);
     this.add(new THREE.HemisphereLight(o.hemi[0], o.hemi[1], o.hemi[2]));
     const sun = new THREE.DirectionalLight(o.sun[0], o.sun[1]);
-    sun.position.set(...(o.sunPos ?? [4, 12, 8]));
+    this.sunOffset.set(...(o.sunPos ?? [4, 12, 8]));
+    sun.position.copy(this.sunOffset);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { left: -12, right: 12, top: 10, bottom: -4, near: 1, far: 40 });
-    sun.shadow.bias = -0.0005;
+    // Enges Frustum um die Kämpfer – wandert mit (siehe focus) und bleibt dadurch scharf
+    Object.assign(sun.shadow.camera, { left: -8, right: 8, top: 7, bottom: -4, near: 1, far: 45 });
+    sun.shadow.bias = -0.0004;
+    sun.shadow.normalBias = 0.02;
+    sun.shadow.radius = 3;
     this.add(sun);
+    this.group.add(sun.target);
+    this.sun = sun;
+
+    // Schwenkender Hallenstrahler über der Kampffläche – wirft einen zweiten, wandernden Schatten
+    const spot = new THREE.SpotLight(o.sun[0], 90, 30, 0.42, 0.55, 1.6);
+    spot.position.set(0, 9.5, 3.5);
+    spot.castShadow = true;
+    spot.shadow.mapSize.set(1024, 1024);
+    spot.shadow.bias = -0.0006;
+    spot.shadow.normalBias = 0.02;
+    spot.shadow.radius = 4;
+    Object.assign(spot.shadow.camera, { near: 2, far: 30 });
+    this.group.add(spot, spot.target);
+    this.spot = spot;
   }
 
   floor(o: { base: string; speck?: [number, number, number]; joints?: string; roughness?: number; metalness?: number; repeat?: [number, number]; lines?: number | null }) {
@@ -793,6 +816,19 @@ export function buildStage(scene: THREE.Scene, id: string): BuiltStage {
     impactZ: b.impactZ,
     update(t, dt) {
       for (const a of b.animators) a(t, dt);
+    },
+    focus(x, z, t) {
+      if (b.sun) {
+        // auf Texelgröße runden, damit die Schattenkanten beim Mitwandern nicht flimmern
+        const texel = 16 / 2048;
+        const fx = Math.round(x / texel) * texel;
+        b.sun.position.set(fx + b.sunOffset.x, b.sunOffset.y, z + b.sunOffset.z);
+        b.sun.target.position.set(fx, 0, z);
+      }
+      if (b.spot) {
+        b.spot.position.set(x + Math.sin(t * 0.35) * 3, 9.5, 3.5);
+        b.spot.target.position.set(x + Math.sin(t * 0.6) * 1.5, 0, z + Math.cos(t * 0.45) * 0.8);
+      }
     },
     dispose() {
       scene.remove(b.group);

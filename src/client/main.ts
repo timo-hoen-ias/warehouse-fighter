@@ -1,9 +1,9 @@
 import './style.css';
-import { CHARACTERS, getCharacter } from '../shared/characters';
+import { CHARACTERS, MOVE_INPUTS, type MoveKey, getCharacter } from '../shared/characters';
 import { type GameEvent, type GameState, ROUNDS_TO_WIN, TICK_RATE, createGame, step } from '../shared/game';
 import { STAGES, getStage } from '../shared/stages';
 import { CpuController } from './ai';
-import { sfx, unlockAudio } from './audio';
+import { type Weight, announce, audioSettings, setAnnouncerEnabled, setMusicEnabled, setMusicLevel, sfx, startMusic, unlockAudio } from './audio';
 import { CONTROLS_HELP, initKeyboard, readInput } from './input';
 import { NetClient, createRoom } from './net';
 import { GameRenderer } from './renderer';
@@ -90,6 +90,12 @@ function updateHud() {
   $('netinfo').textContent = net ? `${stage} · Online · Ping ${net.ping} ms · Du bist Spieler ${mySlot + 1}` : info;
 }
 
+const HEAVY_MOVES = new Set<MoveKey>(['heavy', 'finisher', 'launcher', 'overhead', 'rush', 'throw', 'fwdKick', 'special']);
+const MID_MOVES = new Set<MoveKey>(['kick', 'kick2', 'lowKick', 'fwdLight', 'air', 'airKick', 'low']);
+const KICK_MOVES = new Set<MoveKey>(['kick', 'kick2', 'lowKick', 'fwdKick', 'airKick', 'low']);
+const weightOf = (m: MoveKey): Weight => (HEAVY_MOVES.has(m) ? 'heavy' : MID_MOVES.has(m) ? 'mid' : 'light');
+const ROUND_WORDS = ['eins', 'zwei', 'drei', 'vier', 'fünf'];
+
 function handleEvents(events: GameEvent[]) {
   renderer.handleEvents(events, state);
   for (const e of events) {
@@ -97,22 +103,31 @@ function handleEvents(events: GameEvent[]) {
       case 'roundStart':
         banner(`RUNDE ${e.round}`);
         sfx.bell();
+        announce(`Runde ${ROUND_WORDS[e.round - 1] ?? e.round}`);
         break;
       case 'fight':
         banner('SCHICHTBEGINN!');
         sfx.horn();
+        announce('Schichtbeginn!');
         break;
       case 'swing':
-        sfx.swing();
+        if (e.move === 'throw') sfx.grab();
+        else sfx.swing(weightOf(e.move), KICK_MOVES.has(e.move));
+        break;
+      case 'dash':
+        sfx.dash();
         break;
       case 'projectile':
-        if (e.kind === 'laser' || e.kind === 'lidar' || e.kind === 'label') sfx.scanner();
-        else if (e.kind === 'wave') sfx.horn();
-        else sfx.throw();
+        sfx.projectile(e.kind);
         break;
       case 'hit':
-        sfx.hit(e.heavy);
-        showCombo(e.target === 0 ? 1 : 0, state.fighters[e.target].combo);
+        sfx.hit(weightOf(e.move), e.combo);
+        sfx.comboTick(e.combo);
+        showCombo(e.target === 0 ? 1 : 0, e.combo);
+        if (e.move === 'launcher') banner('AB IN DIE LUFT!');
+        break;
+      case 'knockdown':
+        sfx.knockdown();
         break;
       case 'block':
         sfx.block();
@@ -120,9 +135,13 @@ function handleEvents(events: GameEvent[]) {
       case 'ko':
         banner(e.finisher === 'wall' ? 'AB INS REGAL!' : e.finisher === 'head' ? 'KOPF AB – FEIERABEND!' : 'FEIERABEND!');
         sfx.ko();
+        if (e.finisher === 'wall') setTimeout(sfx.wallSlam, 700);
+        else setTimeout(sfx.gore, 120);
+        announce('Feierabend!');
         break;
       case 'timeout':
         banner('SCHICHTENDE!');
+        announce('Schichtende!');
         break;
       case 'matchEnd':
         setTimeout(() => showResult(e.winner), 600);
@@ -196,6 +215,8 @@ function beginMatch(chars: [string, string]) {
   running = true;
   paused = false;
   accumulator = 0;
+  startMusic('fight');
+  setMusicLevel(1);
   handleEvents(state.events);
 }
 
@@ -208,6 +229,8 @@ function toMenu() {
   cpu = null;
   ladder = null;
   pendingRoom = null;
+  startMusic('menu');
+  setMusicLevel(1);
   $('hud').classList.add('hidden');
   history.replaceState(null, '', location.pathname);
   show('menu');
@@ -381,6 +404,10 @@ function setPaused(on: boolean) {
   $('pauseInfo').textContent =
     mode === 'online' ? 'Online läuft der Kampf weiter – dein Gegner wartet nicht!' : 'Frühstückspause – 15 Minuten, nicht mehr!';
   $('restart').classList.toggle('hidden', mode === 'online');
+  if (on) renderMoveList();
+  $('movelist').classList.add('hidden');
+  $('pause').classList.remove('moves');
+  setMusicLevel(on ? 0.35 : 1);
   show(on ? 'pause' : null);
   last = performance.now();
 }
@@ -402,6 +429,66 @@ function applyBlood(on: boolean) {
   }
 }
 applyBlood(loadBloodSetting());
+
+// --- Befehlsliste ------------------------------------------------------------
+const MOVE_ORDER: MoveKey[] = ['light', 'light2', 'finisher', 'heavy', 'kick', 'kick2', 'fwdLight', 'fwdKick', 'overhead', 'launcher', 'lowLight', 'lowKick', 'low', 'air', 'airKick', 'special', 'rush', 'throw'];
+const COMBOS = [
+  'Leicht, Leicht, Schwer',
+  'Leicht, Leicht, Tritt',
+  'Leicht, Tritt, Tritt',
+  'Schwer, Tritt',
+  '→ + Leicht, Schwer',
+  '↓ + Leicht, ↓ + Leicht, ↓ + Tritt',
+  '← + Schwer (Launcher), dann in der Luft: Leicht, Leicht, Schwer',
+];
+
+function moveTag(char: string, m: MoveKey) {
+  const def = getCharacter(char).moves[m];
+  const tags: string[] = [];
+  if (def.height === 'low') tags.push('tief');
+  if (def.height === 'high' && m !== 'air' && m !== 'airKick') tags.push('hoch');
+  if (def.launch) tags.push('Launcher');
+  if (def.grab) tags.push('Wurf');
+  else if (def.knockdown) tags.push('wirft um');
+  if (def.projectile) tags.push('Geschoss');
+  return tags.join(' · ');
+}
+
+function renderMoveList() {
+  const el = $('movelist');
+  const seen = new Set<string>();
+  el.innerHTML = '';
+  state.fighters.forEach((f) => {
+    if (seen.has(f.char)) return;
+    seen.add(f.char);
+    const c = getCharacter(f.char);
+    const rows = MOVE_ORDER.map((m) => `<tr><td class="in">${MOVE_INPUTS[m]}</td><td>${c.moves[m].name}</td><td class="tag">${moveTag(c.id, m)}</td></tr>`).join('');
+    el.insertAdjacentHTML('beforeend', `<div><h3>${c.icon} ${c.name}</h3><table>${rows}</table></div>`);
+  });
+  el.insertAdjacentHTML(
+    'beforeend',
+    `<div class="combos"><b>Kombos:</b> ${COMBOS.join(' &nbsp;|&nbsp; ')}<br/><b>Bewegung:</b> → → Dash, ← ← Rückwärts-Dash, ↓ halten = tief blocken, ← halten = blocken. Würfe sind nicht blockbar, tiefe Angriffe nur geduckt.</div>`,
+  );
+}
+
+function applyToggle(id: string, label: string, on: boolean) {
+  $(id).textContent = `${label}: ${on ? 'an' : 'aus'}`;
+}
+applyToggle('toggleMusic', 'Musik', audioSettings.music);
+applyToggle('toggleAnnouncer', 'Ansager', audioSettings.announcer);
+$('toggleMusic').addEventListener('click', () => {
+  setMusicEnabled(!audioSettings.music);
+  setMusicLevel(paused ? 0.35 : 1);
+  applyToggle('toggleMusic', 'Musik', audioSettings.music);
+});
+$('toggleAnnouncer').addEventListener('click', () => {
+  setAnnouncerEnabled(!audioSettings.announcer);
+  applyToggle('toggleAnnouncer', 'Ansager', audioSettings.announcer);
+});
+$('toggleMoves').addEventListener('click', () => {
+  const open = $('movelist').classList.toggle('hidden') === false;
+  $('pause').classList.toggle('moves', open);
+});
 
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' || e.code === 'KeyP') setPaused(!paused);
@@ -468,6 +555,38 @@ $('rematch').addEventListener('click', () => {
   startLocal([state.fighters[0].char, state.fighters[1].char], state.stage);
 });
 
+// Musik startet mit der ersten Eingabe (Browser erlauben vorher keinen Ton)
+function firstGesture() {
+  unlockAudio();
+  if (!running) startMusic('menu');
+  window.removeEventListener('pointerdown', firstGesture);
+  window.removeEventListener('keydown', firstGesture);
+}
+window.addEventListener('pointerdown', firstGesture);
+window.addEventListener('keydown', firstGesture);
+
+// Retro-Pixelfilter: aus / leicht / mittel / stark
+const RETRO_LABELS = ['aus', 'leicht', 'mittel', 'stark'];
+function loadRetro() {
+  try {
+    const v = Number(localStorage.getItem('wf-retro') ?? 2);
+    return v >= 0 && v <= 3 ? v : 2;
+  } catch {
+    return 2;
+  }
+}
+function applyRetro(level: number) {
+  renderer.retro = level;
+  for (const id of ['retroMenu', 'retroPause']) $(id).textContent = `Retro-Filter: ${RETRO_LABELS[level]}`;
+  try {
+    localStorage.setItem('wf-retro', String(level));
+  } catch {
+    // egal
+  }
+}
+applyRetro(loadRetro());
+for (const id of ['retroMenu', 'retroPause']) $(id).addEventListener('click', () => applyRetro((renderer.retro + 1) % 4));
+
 // Direkt-Einladung per Link: ?room=CODE
 const roomParam = new URLSearchParams(location.search).get('room');
 if (roomParam && /^[A-Za-z0-9]{4,8}$/.test(roomParam)) {
@@ -481,6 +600,7 @@ if (roomParam && /^[A-Za-z0-9]{4,8}$/.test(roomParam)) {
 // --- Hauptschleife -----------------------------------------------------------
 const STEP = 1 / TICK_RATE;
 let last = performance.now();
+let wasSlow = false;
 
 function frame(now: number) {
   const dt = Math.min(0.1, (now - last) / 1000);
@@ -507,6 +627,9 @@ function frame(now: number) {
 
   renderer.render(state, paused && mode !== 'online' ? 0 : dt);
   if (running) updateHud();
+  const slow = state.slowmo > 0;
+  if (slow !== wasSlow && !paused) setMusicLevel(slow ? 0.25 : 1);
+  wasSlow = slow;
   requestAnimationFrame(frame);
 }
 
