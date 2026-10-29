@@ -34,7 +34,8 @@
       <h1>WAREHOUSE<br /><span>FIGHTER</span></h1>
       <p class="tag">Der härteste Arbeitskampf im Lager 3.</p>
       <div class="buttons">
-        <button data-mode="cpu">Gegen CPU</button>
+        <button data-mode="arcade">Arcade: alle 9 Gegner</button>
+        <button data-mode="cpu">Gegen CPU (frei)</button>
         <button data-mode="local">2 Spieler lokal</button>
         <button data-mode="host">Online: Raum erstellen</button>
         <div class="join">
@@ -62,6 +63,22 @@
       <button id="copyLink">Einladungslink kopieren</button>
       <p class="small" id="lobbyStatus"></p>
       <button class="back" id="lobbyBack">Abbrechen</button>
+    </section>
+
+    <section id="pause" class="screen hidden overlay">
+      <h2>PAUSE</h2>
+      <p class="small" id="pauseInfo">Frühstückspause – 15 Minuten, nicht mehr!</p>
+      <div class="buttons">
+        <button id="resume">Weiter</button>
+        <button id="restart">Kampf neu starten</button>
+        <button id="toggleBlood">Blut: an</button>
+        <button id="pauseMenu" class="back">Hauptmenü</button>
+      </div>
+      <div class="controls">
+        <div><b>Spieler 1</b> <span id="pctrl1"></span></div>
+        <div><b>Spieler 2</b> <span id="pctrl2"></span></div>
+        <div>Esc / P / Start = Pause</div>
+      </div>
     </section>
 
     <section id="result" class="screen hidden overlay">

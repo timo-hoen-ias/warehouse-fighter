@@ -4,6 +4,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import { CHARACTERS } from '../shared/characters';
+import { STAGES } from '../shared/stages';
 import { type GameEvent, type GameState, TICK_RATE, createGame, step } from '../shared/game';
 import { type ClientMessage, ROOM_CODE_RE, type ServerMessage } from '../shared/protocol';
 
@@ -47,6 +48,8 @@ interface Attachment {
   slot: 0 | 1 | null;
   char: string;
   name: string;
+  /** Arenawunsch – es gilt der von Spieler 1 (Raum-Ersteller). */
+  stage: string;
 }
 
 const SEND_EVERY = 2; // Snapshots mit 30 Hz
@@ -77,7 +80,7 @@ export class MatchRoom extends DurableObject<Env> {
       server.close(4000, 'Raum voll');
       return new Response(null, { status: 101, webSocket: client });
     }
-    server.serializeAttachment({ slot, char: '', name: '' } satisfies Attachment);
+    server.serializeAttachment({ slot, char: '', name: '', stage: '' } satisfies Attachment);
     this.send(server, { t: 'welcome', slot, room: code });
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -124,7 +127,8 @@ export class MatchRoom extends DurableObject<Env> {
       case 'join': {
         const char = CHARACTERS.some((c) => c.id === msg.char) ? msg.char : CHARACTERS[0].id;
         const name = String(msg.name ?? '').slice(0, 16) || `Spieler ${slot + 1}`;
-        ws.serializeAttachment({ slot, char, name } satisfies Attachment);
+        const stage = STAGES.some((s) => s.id === msg.stage) ? msg.stage : '';
+        ws.serializeAttachment({ slot, char, name, stage } satisfies Attachment);
         this.tryStart();
         break;
       }
@@ -161,12 +165,13 @@ export class MatchRoom extends DurableObject<Env> {
     if (players.length < 2) return;
     const chars: [string, string] = [players[0].att.char, players[1].att.char];
     const names: [string, string] = [players[0].att.name, players[1].att.name];
-    this.game = createGame(chars[0], chars[1]);
+    const stage = players[0].att.stage || players[1].att.stage || STAGES[Math.floor(Math.random() * STAGES.length)].id;
+    this.game = createGame(chars[0], chars[1], stage);
     this.inputs = [0, 0];
     this.taps = [0, 0];
     this.rematch = [false, false];
     this.pendingEvents = [...this.game.events];
-    this.broadcast({ t: 'start', chars, names });
+    this.broadcast({ t: 'start', chars, names, stage });
     this.startLoop();
   }
 

@@ -2,7 +2,7 @@
 import type { GameState } from './game';
 
 export type ClientMessage =
-  | { t: 'join'; char: string; name: string }
+  | { t: 'join'; char: string; name: string; stage: string }
   | { t: 'input'; i: number }
   | { t: 'rematch' }
   | { t: 'ping'; ts: number };
@@ -10,7 +10,7 @@ export type ClientMessage =
 export type ServerMessage =
   | { t: 'welcome'; slot: 0 | 1; room: string }
   | { t: 'waiting' }
-  | { t: 'start'; chars: [string, string]; names: [string, string] }
+  | { t: 'start'; chars: [string, string]; names: [string, string]; stage: string }
   | { t: 'state'; s: GameState }
   | { t: 'opponentLeft' }
   | { t: 'rematchRequested'; slot: 0 | 1 }
