@@ -48,12 +48,13 @@ Gefahrgutlager (rotierende Warnleuchten) · Black Friday Peak Season (Paketberg,
 - Der **finale Schlag** löst eine **Zeitlupe** aus, die Kamera zoomt heran, und je nach Runde fliegt dem Verlierer
   **der Kopf** oder **ein Arm** weg – oder er kracht **quer durch die Halle ins Regal**. Die Zeitlupe läuft in der
   gemeinsamen Simulation, online sehen also beide Spieler denselben Finisher.
-- **Pause:** `Esc`, `P` oder Start am Gamepad. Dort lässt sich das Blut auch abschalten (wird im Browser gespeichert).
+- **Pause:** `Esc`, `P` oder Start am Gamepad. Blut lässt sich in den Optionen abschalten (wird im Browser gespeichert).
   Online läuft der Kampf während der Pause weiter.
 
 ## Kampfsystem (Tekken-Stil)
 
-Jeder Kämpfer hat **18 Moves** mit eigenen Namen. Die komplette **Befehlsliste** steht im Pausenmenü.
+Jeder Kämpfer hat **18 Moves** mit eigenen Namen. Die **Kampfschule** (Hauptmenü und Pausenmenü) erklärt Grundlagen,
+Kombos mit Schwierigkeitsgrad, die komplette Befehlsliste jedes Kämpfers und die Steuerung.
 
 - **Kombos:** Angriffe lassen sich bei Treffer in den nächsten Angriff abbrechen, z. B. *Leicht, Leicht, Schwer*,
   *Leicht, Tritt, Tritt*, *Schwer, Tritt* oder *↓ Leicht, ↓ Leicht, ↓ Tritt*. Ein Eingabepuffer verzeiht knappes Timing,
@@ -69,11 +70,20 @@ Jeder Kämpfer hat **18 Moves** mit eigenen Namen. Die komplette **Befehlsliste*
 - **Animationen** über federnde Gelenke: Ausholen, Durchziehen, Gewichtsverlagerung, Treffer- und Sturzreaktionen.
 - **Live-Schatten:** Die Sonne folgt dem Kampf mit einem engen, scharfen Schattenbereich, dazu schwenkt ein Hallenstrahler
   über die Kampffläche.
-- **Retro-Pixelfilter** (aus / leicht / mittel / stark, im Hauptmenü und im Pausenmenü): niedrigere Auflösung, reduzierte
+- **Retro-Pixelfilter** (aus / leicht / mittel / stark, in den Optionen): niedrigere Auflösung, reduzierte
   Farben, Dithering und Scanlines.
 - **Sound** komplett synthetisiert: geschichtete Treffer je nach Gewicht, Hallenhall, Klonk beim Blocken, Aufprall beim
   Knockdown, eigener Klang je Geschoss, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
-- **90er-Arcade-Musik** im Hauptmenü und im Kampf. Musik und Ansager lassen sich im Pausenmenü abschalten.
+- **90er-Arcade-Musik:** ein Menütitel und fünf Kampftitel („Schichtbeginn“, „Gabelstapler-Turbo“, „Kühlhaus-Techno“,
+  „Nachtschicht“, „Endgegner“). Automatisch passend zur Arena, im Arcade-Finale läuft der Endgegner-Titel – oder fest
+  gewählt in den Optionen.
+
+## Menüs
+
+- **Hauptmenü:** Spielen (Arcade, gegen CPU, 2 Spieler lokal) · Online (Raum erstellen/beitreten) · Kampfschule · Optionen
+- **Pausenmenü:** Weiter · Kampf neu starten · Befehlsliste & Kombos · Optionen · Hauptmenü
+- **Optionen:** Retro-Filter, Blut, Musik an/aus, Musiktitel (mit Vorschau), Musik- und Effekt-Lautstärke, Ansager.
+  Alles wird im Browser gespeichert. `Esc` geht in jedem Untermenü zurück.
 
 ## Steuerung
 

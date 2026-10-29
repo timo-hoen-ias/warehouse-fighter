@@ -33,22 +33,29 @@
     <section id="menu" class="screen">
       <h1>WAREHOUSE<br /><span>FIGHTER</span></h1>
       <p class="tag">Der härteste Arbeitskampf im Lager 3.</p>
-      <div class="buttons">
+      <div class="buttons" data-panel="main">
+        <button data-open="play">Spielen</button>
+        <button data-open="online">Online</button>
+        <button data-guide>Kampfschule &amp; Kombos</button>
+        <button data-options class="alt">Optionen</button>
+      </div>
+      <div class="buttons hidden" data-panel="play">
+        <p class="panel-title">Spielen</p>
         <button data-mode="arcade">Arcade: alle 9 Gegner</button>
         <button data-mode="cpu">Gegen CPU (frei)</button>
         <button data-mode="local">2 Spieler lokal</button>
-        <button data-mode="host">Online: Raum erstellen</button>
+        <button data-open="main" class="back">Zurück</button>
+      </div>
+      <div class="buttons hidden" data-panel="online">
+        <p class="panel-title">Online 1 gegen 1</p>
+        <button data-mode="host">Raum erstellen</button>
         <div class="join">
           <input id="roomInput" maxlength="8" placeholder="RAUMCODE" autocomplete="off" />
           <button data-mode="join">Beitreten</button>
         </div>
-        <button id="retroMenu" class="back">Retro-Filter: mittel</button>
+        <button data-open="main" class="back">Zurück</button>
       </div>
-      <div class="controls">
-        <div><b>Spieler 1</b> <span id="ctrl1"></span></div>
-        <div><b>Spieler 2</b> <span id="ctrl2"></span></div>
-        <div>Zurück halten = blocken · 2× vor/zurück = Dash · Leicht + Tritt = Wurf · ← + schwer = Launcher · Kombos: leicht, leicht, schwer · Befehlsliste im Pausenmenü (Esc)</div>
-      </div>
+      <p class="small">Neu hier? In der <b>Kampfschule</b> stehen Steuerung, Kombos und alle Moves.</p>
     </section>
 
     <section id="select" class="screen hidden">
@@ -72,19 +79,40 @@
       <div class="buttons">
         <button id="resume">Weiter</button>
         <button id="restart">Kampf neu starten</button>
-        <button id="toggleMoves">Befehlsliste</button>
-        <button id="toggleBlood">Blut: an</button>
-        <button id="retroPause">Retro-Filter: mittel</button>
-        <button id="toggleMusic">Musik: an</button>
-        <button id="toggleAnnouncer">Ansager: an</button>
+        <button data-guide data-tab="moves">Befehlsliste &amp; Kombos</button>
+        <button data-options class="alt">Optionen</button>
         <button id="pauseMenu" class="back">Hauptmenü</button>
       </div>
-      <div id="movelist" class="movelist hidden"></div>
-      <div class="controls">
-        <div><b>Spieler 1</b> <span id="pctrl1"></span></div>
-        <div><b>Spieler 2</b> <span id="pctrl2"></span></div>
-        <div>Esc / P / Start = Pause</div>
+      <p class="small">Esc / P / Start = weiter</p>
+    </section>
+
+    <section id="options" class="screen hidden overlay">
+      <h2>OPTIONEN</h2>
+      <div class="options">
+        <h3>Grafik</h3>
+        <label>Retro-Pixelfilter <button id="optRetro" class="choice">mittel</button></label>
+        <label>Blut <button id="optBlood" class="choice">an</button></label>
+        <h3>Ton</h3>
+        <label>Musik <button id="optMusic" class="choice">an</button></label>
+        <label>Musiktitel im Kampf <button id="optTrack" class="choice">Automatisch</button></label>
+        <label>Musik-Lautstärke <input id="optMusicVol" type="range" min="0" max="100" /></label>
+        <label>Effekt-Lautstärke <input id="optSfxVol" type="range" min="0" max="100" /></label>
+        <label>Ansager <button id="optAnnouncer" class="choice">an</button></label>
       </div>
+      <p class="small" id="trackHint">Beim Durchschalten der Titel hörst du direkt eine Vorschau.</p>
+      <button class="back" data-back>Zurück</button>
+    </section>
+
+    <section id="guide" class="screen hidden overlay">
+      <h2>KAMPFSCHULE</h2>
+      <div class="tabs">
+        <button data-tab="basics">Grundlagen</button>
+        <button data-tab="combos">Kombos</button>
+        <button data-tab="moves">Befehlsliste</button>
+        <button data-tab="controls">Steuerung</button>
+      </div>
+      <div class="guide" id="guideBody"></div>
+      <button class="back" data-back>Zurück</button>
     </section>
 
     <section id="result" class="screen hidden overlay">

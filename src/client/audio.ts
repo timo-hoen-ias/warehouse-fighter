@@ -9,12 +9,38 @@ let master: GainNode;
 let dry: GainNode;
 let wet: GainNode;
 let musicBus: GainNode;
+let sfxWet: GainNode;
 let noiseBuf: AudioBuffer;
 
 export const audioSettings = {
   music: load('wf-music', true),
   announcer: load('wf-announcer', true),
+  musicVolume: loadNumber('wf-music-vol', 0.8),
+  sfxVolume: loadNumber('wf-sfx-vol', 1),
+  /** 'auto' = Titel passend zur Arena, sonst feste Titel-ID */
+  track: loadString('wf-track', 'auto'),
 };
+
+function loadString(key: string, fallback: string) {
+  try {
+    return localStorage.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadNumber(key: string, fallback: number) {
+  const v = Number(loadString(key, String(fallback)));
+  return Number.isFinite(v) && v >= 0 && v <= 1 ? v : fallback;
+}
+
+function store(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // privates Fenster o. Ä.
+  }
+}
 
 function load(key: string, fallback: boolean) {
   try {
@@ -26,11 +52,7 @@ function load(key: string, fallback: boolean) {
 }
 
 function save(key: string, on: boolean) {
-  try {
-    localStorage.setItem(key, on ? 'on' : 'off');
-  } catch {
-    // privates Fenster o. Ä.
-  }
+  store(key, on ? 'on' : 'off');
 }
 
 export function unlockAudio() {
@@ -51,15 +73,19 @@ function init() {
   comp.connect(master).connect(ctx.destination);
 
   dry = ctx.createGain();
+  dry.gain.value = audioSettings.sfxVolume;
   dry.connect(comp);
   const reverb = ctx.createConvolver();
   reverb.buffer = impulse(ctx, 1.8, 2.6);
   wet = ctx.createGain();
   wet.gain.value = 0.28;
   wet.connect(reverb).connect(comp);
+  sfxWet = ctx.createGain();
+  sfxWet.gain.value = audioSettings.sfxVolume;
+  sfxWet.connect(wet);
 
   musicBus = ctx.createGain();
-  musicBus.gain.value = audioSettings.music ? 0.32 : 0;
+  musicBus.gain.value = 0;
   musicBus.connect(comp);
   const musicVerb = ctx.createGain();
   musicVerb.gain.value = 0.18;
@@ -94,7 +120,7 @@ function out(reverb = 0.3): AudioNode {
   if (reverb > 0) {
     const s = ctx!.createGain();
     s.gain.value = reverb;
-    g.connect(s).connect(wet);
+    g.connect(s).connect(sfxWet);
   }
   return g;
 }
@@ -162,9 +188,9 @@ function noise(dur: number, o: NoiseOpts = {}) {
 }
 
 /** Metallischer Klang aus unharmonischen Teiltönen (Regal, Gitterbox, Gong). */
-function metal(base: number, dur: number, vol: number, reverb = 0.5, delay = 0) {
+function metal(base: number, dur: number, vol: number, reverb = 0.5, delay = 0, dest?: AudioNode) {
   for (const [ratio, v] of [[1, 1], [2.76, 0.6], [5.4, 0.4], [8.93, 0.25]] as const) {
-    tone(base * ratio, dur / ratio ** 0.3, { type: 'sine', vol: vol * v, reverb, delay });
+    tone(base * ratio, dur / ratio ** 0.3, { type: 'sine', vol: vol * v, reverb, delay, dest });
   }
 }
 
@@ -323,7 +349,7 @@ export function announce(text: string) {
     if (voice) u.voice = voice;
     u.rate = 0.95;
     u.pitch = 0.6;
-    u.volume = 0.9;
+    u.volume = 0.9 * audioSettings.sfxVolume;
     speechSynthesis.speak(u);
   } catch {
     // Sprachausgabe nicht verfügbar
@@ -331,37 +357,29 @@ export function announce(text: string) {
 }
 
 // --- Musik ---------------------------------------------------------------
-// 90er-Arcade-Musik, komplett synthetisiert: Eurodance-Beat, Oktav-Bass,
-// Arpeggio-Flächen und eine Rechteck-Leadstimme. Zwei Stücke: eines fürs
-// Hauptmenü, ein schnelleres für die Kämpfe. Eingeplant per Lookahead-Scheduler.
+// 90er-Arcade-Musik, komplett synthetisiert: Beat, Bass, Arpeggios, Flächen und
+// eine Leadstimme mit Schwebung und Echo. Ein Titel fürs Hauptmenü und fünf
+// Kampftitel; welcher läuft, hängt von der Arena ab (oder von den Optionen).
+// Eingeplant per Lookahead-Scheduler.
 
-export type Song = 'menu' | 'fight';
+type Drums = 'euro' | 'light' | 'techno' | 'synth' | 'boss';
+type Bass = 'octave' | 'offbeat' | 'rolling';
 
 interface SongDef {
+  title: string;
   bpm: number;
   /** Grundton (MIDI) und Moll/Dur je Takt */
   chords: [number, boolean][];
   /** Lead-Melodie: 16 Sechzehntel je Takt, 0 = Pause */
   lead: number[][];
   leadType: OscillatorType;
-  /** Takte pro Abschnitt; Abschnitt 0 ohne Lead (Intro/Break) */
-  drums: 'euro' | 'light';
+  drums: Drums;
+  bass: Bass;
 }
 
-const SONGS: Record<Song, SongDef> = {
-  fight: {
-    bpm: 152,
-    chords: [[57, true], [53, false], [48, false], [55, false]],
-    lead: [
-      [76, 0, 76, 74, 72, 0, 69, 0, 72, 0, 74, 0, 76, 0, 79, 0],
-      [77, 0, 76, 74, 72, 0, 69, 0, 77, 0, 76, 0, 72, 0, 74, 0],
-      [79, 0, 79, 77, 76, 0, 72, 0, 76, 0, 77, 0, 79, 0, 84, 0],
-      [83, 0, 81, 79, 74, 0, 71, 0, 79, 0, 0, 0, 81, 0, 83, 0],
-    ],
-    leadType: 'square',
-    drums: 'euro',
-  },
+export const SONGS = {
   menu: {
+    title: 'Lager 3 (Hauptmenü)',
     bpm: 124,
     chords: [[50, true], [46, false], [53, false], [48, false]],
     lead: [
@@ -372,11 +390,87 @@ const SONGS: Record<Song, SongDef> = {
     ],
     leadType: 'triangle',
     drums: 'light',
+    bass: 'octave',
   },
-};
+  schicht: {
+    title: 'Schichtbeginn',
+    bpm: 152,
+    chords: [[57, true], [53, false], [48, false], [55, false]],
+    lead: [
+      [76, 0, 76, 74, 72, 0, 69, 0, 72, 0, 74, 0, 76, 0, 79, 0],
+      [77, 0, 76, 74, 72, 0, 69, 0, 77, 0, 76, 0, 72, 0, 74, 0],
+      [79, 0, 79, 77, 76, 0, 72, 0, 76, 0, 77, 0, 79, 0, 84, 0],
+      [83, 0, 81, 79, 74, 0, 71, 0, 79, 0, 0, 0, 81, 0, 83, 0],
+    ],
+    leadType: 'square',
+    drums: 'euro',
+    bass: 'octave',
+  },
+  turbo: {
+    title: 'Gabelstapler-Turbo',
+    bpm: 165,
+    chords: [[50, true], [46, false], [48, false], [45, true]],
+    lead: [
+      [81, 0, 79, 0, 77, 0, 76, 0, 77, 0, 0, 74, 0, 0, 74, 0],
+      [77, 0, 79, 0, 81, 0, 82, 0, 81, 0, 79, 0, 77, 0, 0, 0],
+      [76, 0, 77, 0, 79, 0, 0, 76, 0, 0, 72, 0, 76, 0, 79, 0],
+      [81, 0, 0, 0, 76, 0, 0, 0, 72, 0, 76, 0, 81, 0, 84, 0],
+    ],
+    leadType: 'square',
+    drums: 'euro',
+    bass: 'offbeat',
+  },
+  techno: {
+    title: 'Kühlhaus-Techno',
+    bpm: 138,
+    chords: [[52, true], [52, true], [48, false], [50, false]],
+    lead: [
+      [76, 0, 76, 0, 0, 0, 79, 0, 76, 0, 0, 0, 74, 0, 76, 0],
+      [76, 0, 76, 0, 0, 0, 83, 0, 81, 0, 79, 0, 76, 0, 0, 0],
+      [72, 0, 76, 0, 79, 0, 76, 0, 72, 0, 76, 0, 79, 0, 84, 0],
+      [74, 0, 78, 0, 81, 0, 78, 0, 74, 0, 78, 0, 81, 0, 86, 0],
+    ],
+    leadType: 'sawtooth',
+    drums: 'techno',
+    bass: 'rolling',
+  },
+  nacht: {
+    title: 'Nachtschicht',
+    bpm: 112,
+    chords: [[53, false], [55, false], [52, true], [57, true]],
+    lead: [
+      [72, 0, 0, 0, 74, 0, 0, 0, 76, 0, 0, 0, 77, 0, 76, 0],
+      [74, 0, 0, 0, 0, 0, 71, 0, 74, 0, 0, 0, 79, 0, 0, 0],
+      [76, 0, 0, 0, 79, 0, 0, 0, 83, 0, 0, 0, 79, 0, 76, 0],
+      [76, 0, 0, 0, 72, 0, 0, 0, 69, 0, 0, 0, 0, 0, 0, 0],
+    ],
+    leadType: 'square',
+    drums: 'synth',
+    bass: 'rolling',
+  },
+  boss: {
+    title: 'Endgegner',
+    bpm: 170,
+    chords: [[48, true], [44, false], [46, false], [43, false]],
+    lead: [
+      [72, 0, 75, 0, 79, 0, 75, 0, 84, 0, 0, 82, 0, 0, 79, 0],
+      [80, 0, 0, 79, 0, 0, 75, 0, 72, 0, 75, 0, 80, 0, 0, 0],
+      [82, 0, 0, 79, 0, 0, 77, 0, 74, 0, 77, 0, 82, 0, 0, 0],
+      [79, 0, 0, 0, 83, 0, 0, 0, 86, 0, 0, 0, 83, 0, 79, 0],
+    ],
+    leadType: 'square',
+    drums: 'boss',
+    bass: 'octave',
+  },
+} satisfies Record<string, SongDef>;
+
+export type Song = keyof typeof SONGS;
+/** Kampftitel in der Reihenfolge, in der sie den Arenen zugeordnet werden. */
+export const FIGHT_SONGS: Song[] = ['schicht', 'turbo', 'techno', 'nacht', 'boss'];
 
 let musicTimer: ReturnType<typeof setInterval> | null = null;
 let song: Song | null = null;
+let musicLevel = 1;
 let nextTime = 0;
 let stepIndex = 0;
 
@@ -391,38 +485,62 @@ function scheduleStep(def: SongDef, t: number, i: number) {
   const triad = [0, minor ? 3 : 4, 7, 12];
   const delay = Math.max(0, t - ctx!.currentTime);
   const o = { delay, dest: musicBus, reverb: 0 };
+  const kick = (vol = 0.7) => tone(120, 0.2, { ...o, type: 'sine', to: 40, vol });
+  const snare = (vol = 0.32) => {
+    noise(0.16, { ...o, type: 'bandpass', freq: 1900, q: 0.5, vol });
+    tone(190, 0.08, { ...o, type: 'triangle', to: 120, vol: vol * 0.6 });
+  };
 
   // Schlagzeug
-  if (def.drums === 'euro') {
-    if (s % 4 === 0) tone(120, 0.2, { ...o, type: 'sine', to: 40, vol: 0.7 });
-    if (s === 4 || s === 12) {
-      noise(0.16, { ...o, type: 'bandpass', freq: 1900, q: 0.5, vol: 0.32 });
-      tone(190, 0.08, { ...o, type: 'triangle', to: 120, vol: 0.2 });
-    }
-    if (s % 4 === 2) noise(0.09, { ...o, type: 'highpass', freq: 7500, vol: 0.16 }); // offene Hi-Hat
-    else if (s % 2 === 1) noise(0.025, { ...o, type: 'highpass', freq: 9000, vol: 0.06 });
-    if (bar % 4 === 3 && s >= 12) noise(0.06, { ...o, type: 'bandpass', freq: 1400 + s * 120, q: 0.8, vol: 0.18 }); // Snare-Wirbel
-  } else {
-    if (s === 0 || s === 8 || s === 10) tone(100, 0.25, { ...o, type: 'sine', to: 40, vol: 0.5 });
-    if (s === 4 || s === 12) noise(0.1, { ...o, type: 'bandpass', freq: 2400, q: 0.7, vol: 0.12 });
-    if (s % 2 === 0) noise(0.03, { ...o, type: 'highpass', freq: 8000, vol: 0.07 });
+  switch (def.drums) {
+    case 'euro':
+    case 'boss':
+      if (s % 4 === 0) kick();
+      if (def.drums === 'boss' && (s === 7 || s === 14)) kick(0.45);
+      if (s === 4 || s === 12) snare();
+      if (s % 4 === 2) noise(0.09, { ...o, type: 'highpass', freq: 7500, vol: 0.16 }); // offene Hi-Hat
+      else if (s % 2 === 1) noise(0.025, { ...o, type: 'highpass', freq: 9000, vol: 0.06 });
+      if (bar % 4 === 3 && s >= 12) noise(0.06, { ...o, type: 'bandpass', freq: 1400 + s * 120, q: 0.8, vol: 0.18 }); // Snare-Wirbel
+      if (def.drums === 'boss' && s === 0 && bar % 2 === 0) metal(220, 1.2, 0.05, 0, delay, musicBus); // Amboss-Schlag
+      break;
+    case 'techno':
+      if (s % 4 === 0) kick(0.8);
+      if (s === 4 || s === 12) noise(0.05, { ...o, type: 'bandpass', freq: 2600, q: 1.2, vol: 0.2 }); // Clap
+      if (s % 4 === 2) noise(0.12, { ...o, type: 'highpass', freq: 6500, vol: 0.18 });
+      noise(0.02, { ...o, type: 'highpass', freq: 10000, vol: s % 2 ? 0.04 : 0.07 });
+      if (s === 10 && bar % 2) metal(600, 0.3, 0.04, 0, delay, musicBus); // Kühlaggregat-Klong
+      break;
+    case 'synth':
+      if (s === 0 || s === 8 || s === 11) kick(0.6);
+      if (s === 4 || s === 12) {
+        snare(0.36);
+        noise(0.4, { ...o, type: 'lowpass', freq: 3000, to: 800, vol: 0.12 }); // Gated-Reverb-Schwanz
+      }
+      if (s % 2 === 0) noise(0.03, { ...o, type: 'highpass', freq: 8000, vol: 0.08 });
+      break;
+    default:
+      if (s === 0 || s === 8 || s === 10) tone(100, 0.25, { ...o, type: 'sine', to: 40, vol: 0.5 });
+      if (s === 4 || s === 12) noise(0.1, { ...o, type: 'bandpass', freq: 2400, q: 0.7, vol: 0.12 });
+      if (s % 2 === 0) noise(0.03, { ...o, type: 'highpass', freq: 8000, vol: 0.07 });
   }
 
-  // Oktav-Bass auf Achteln (der typische Eurodance-Puls)
-  if (s % 2 === 0) {
-    const n = root - 12 + (s % 4 === 2 ? 12 : 0);
-    tone(midi(n), stepLen * 1.7, { ...o, type: 'sawtooth', vol: 0.13, attack: 0.004 });
-    tone(midi(n) * 1.005, stepLen * 1.7, { ...o, type: 'square', vol: 0.05, attack: 0.004 });
-  }
+  // Bass
+  const bassTone = (n: number, len: number, vol = 0.13) => {
+    tone(midi(n), len, { ...o, type: 'sawtooth', vol, attack: 0.004 });
+    tone(midi(n) * 1.005, len, { ...o, type: 'square', vol: vol * 0.4, attack: 0.004 });
+  };
+  if (def.bass === 'octave' && s % 2 === 0) bassTone(root - 12 + (s % 4 === 2 ? 12 : 0), stepLen * 1.7);
+  if (def.bass === 'offbeat' && s % 4 === 2) bassTone(root - 12, stepLen * 1.8, 0.16);
+  if (def.bass === 'rolling' && s % 4 !== 0) bassTone(root - 12, stepLen * 0.8, s % 4 === 2 ? 0.14 : 0.09);
 
   // Arpeggio auf Sechzehnteln
   const arp = triad[s % 4] + 12 + root;
-  tone(midi(arp), stepLen * 0.9, { ...o, type: 'square', vol: def.drums === 'euro' ? 0.035 : 0.03, attack: 0.002 });
+  tone(midi(arp), stepLen * 0.9, { ...o, type: 'square', vol: def.drums === 'light' ? 0.03 : 0.035, attack: 0.002 });
 
   // Akkordfläche zum Taktbeginn
   if (s === 0) {
     for (const iv of triad.slice(0, 3)) {
-      tone(midi(root + 12 + iv), stepLen * 15, { ...o, type: 'sawtooth', vol: 0.02, attack: 0.08 });
+      tone(midi(root + 12 + iv), stepLen * 15, { ...o, type: 'sawtooth', vol: def.drums === 'synth' ? 0.035 : 0.02, attack: 0.08 });
     }
   }
 
@@ -430,14 +548,15 @@ function scheduleStep(def: SongDef, t: number, i: number) {
   const note = def.lead[bar % def.lead.length][s];
   if (note && section !== 0) {
     const up = section === 3 ? 12 : 0;
-    const len = stepLen * 1.8;
-    tone(midi(note + up), len, { ...o, type: def.leadType, vol: 0.075, attack: 0.004 });
-    tone(midi(note + up) * 1.007, len, { ...o, type: def.leadType, vol: 0.04, attack: 0.004 }); // Schwebung
-    tone(midi(note + up), len, { ...o, type: def.leadType, vol: 0.025, attack: 0.004, delay: delay + stepLen * 3 }); // Echo
+    const len = stepLen * (def.drums === 'synth' ? 3.5 : 1.8);
+    const vol = def.leadType === 'sawtooth' ? 0.05 : 0.075;
+    tone(midi(note + up), len, { ...o, type: def.leadType, vol, attack: 0.004 });
+    tone(midi(note + up) * 1.007, len, { ...o, type: def.leadType, vol: vol * 0.55, attack: 0.004 }); // Schwebung
+    tone(midi(note + up), len, { ...o, type: def.leadType, vol: vol * 0.33, attack: 0.004, delay: delay + stepLen * 3 }); // Echo
   }
 }
 
-/** Startet ein Stück (läuft schon dasselbe, passiert nichts). */
+/** Startet einen Titel (läuft schon derselbe, passiert nichts). */
 export function startMusic(which: Song) {
   if (!ctx) return;
   if (song === which && musicTimer) return;
@@ -447,12 +566,21 @@ export function startMusic(which: Song) {
   if (musicTimer) return;
   musicTimer = setInterval(() => {
     if (!ctx || !song) return;
-    const def = SONGS[song];
+    const def: SongDef = SONGS[song];
     while (nextTime < ctx.currentTime + 0.25) {
       scheduleStep(def, nextTime, stepIndex++);
       nextTime += 60 / def.bpm / 4;
     }
   }, 50);
+  setMusicLevel(musicLevel);
+}
+
+/** Kampftitel für eine Arena: fest gewählt in den Optionen oder passend zur Arena. */
+export function fightSong(stageIndex: number, finale = false): Song {
+  const t = audioSettings.track;
+  if (t !== 'auto' && t in SONGS) return t as Song;
+  if (finale) return 'boss';
+  return FIGHT_SONGS[stageIndex % (FIGHT_SONGS.length - 1)];
 }
 
 export function stopMusic() {
@@ -463,15 +591,35 @@ export function stopMusic() {
 
 /** Leiser in der Pause/Zeitlupe, ganz aus wenn abgeschaltet. */
 export function setMusicLevel(level: number) {
+  musicLevel = level;
   if (!ctx) return;
-  const target = audioSettings.music ? 0.32 * level : 0;
+  const target = audioSettings.music ? 0.32 * audioSettings.musicVolume * level : 0;
   musicBus.gain.setTargetAtTime(target, ctx.currentTime, 0.15);
 }
 
 export function setMusicEnabled(on: boolean) {
   audioSettings.music = on;
   save('wf-music', on);
-  setMusicLevel(1);
+  setMusicLevel(musicLevel);
+}
+
+export function setMusicVolume(v: number) {
+  audioSettings.musicVolume = v;
+  store('wf-music-vol', String(v));
+  setMusicLevel(musicLevel);
+}
+
+export function setSfxVolume(v: number) {
+  audioSettings.sfxVolume = v;
+  store('wf-sfx-vol', String(v));
+  if (!ctx) return;
+  dry.gain.setTargetAtTime(v, ctx.currentTime, 0.05);
+  sfxWet.gain.setTargetAtTime(v, ctx.currentTime, 0.05);
+}
+
+export function setTrack(t: string) {
+  audioSettings.track = t;
+  store('wf-track', t);
 }
 
 export function setAnnouncerEnabled(on: boolean) {
