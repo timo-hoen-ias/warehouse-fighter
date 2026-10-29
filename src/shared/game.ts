@@ -83,6 +83,8 @@ export interface Fighter {
   launched: boolean;
   /** Höhe des letzten Treffers – für die Trefferreaktion in der Animation. */
   lastHit: 'high' | 'mid' | 'low';
+  /** Abklingzeit des Fernangriffs in Ticks – verhindert Dauerfeuer. */
+  projCooldown: number;
 }
 
 export interface Projectile {
@@ -117,6 +119,9 @@ export type FinisherKind = 'head' | 'arm' | 'wall';
 export const SLOWMO_TICKS = 120;
 /** In der Zeitlupe läuft nur jeder n-te Tick die Simulation. */
 export const SLOWMO_FACTOR = 4;
+
+/** Ticks zwischen zwei Fernangriffen (ab Abwurf) – 1,5 Sekunden. */
+export const PROJECTILE_COOLDOWN = 90;
 
 export type Phase = 'intro' | 'fight' | 'roundEnd' | 'matchEnd';
 
@@ -165,6 +170,7 @@ function createFighter(char: string, slot: 0 | 1): Fighter {
     tapTick: -100,
     launched: false,
     lastHit: 'mid',
+    projCooldown: 0,
   };
 }
 
@@ -270,7 +276,8 @@ function chooseGroundMove(s: GameState, f: Fighter, slot: 0 | 1, buf: number, in
   if (buf & INPUT.LIGHT && buf & INPUT.KICK) return 'throw';
   if (buf & INPUT.SPECIAL) {
     if (fwd) return 'rush';
-    return s.projectiles.some((p) => p.owner === slot) ? null : 'special';
+    // nur ein Geschoss gleichzeitig, danach Abklingzeit
+    return f.projCooldown > 0 || s.projectiles.some((p) => p.owner === slot) ? null : 'special';
   }
   if (buf & INPUT.HEAVY) return down ? 'low' : fwd ? 'overhead' : back ? 'launcher' : 'heavy';
   if (buf & INPUT.KICK) return down ? 'lowKick' : fwd ? 'fwdKick' : 'kick';
@@ -299,6 +306,7 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
   const pressed = input & ~f.prevInput;
   f.prevInput = input;
   f.statusTime += 1;
+  if (f.projCooldown > 0) f.projCooldown -= 1;
 
   // Eingabepuffer
   if (pressed & ATTACK_BUTTONS) {
@@ -376,6 +384,7 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
           life: p.life,
           move: f.move!,
         });
+        f.projCooldown = PROJECTILE_COOLDOWN;
         s.events.push({ type: 'projectile', player: slot, kind: p.kind });
       }
       // Kombo-Kette: nach Treffer/Block in der Erholungsphase in den Folgemove abbrechen
