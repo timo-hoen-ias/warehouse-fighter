@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Warehouse Fighter</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div id="hud" class="hidden">
+      <div class="bars">
+        <div class="side p1">
+          <div class="name" id="name0"></div>
+          <div class="bar"><div class="trail" id="trail0"></div><div class="hp" id="hp0"></div></div>
+          <div class="pips" id="pips0"></div>
+        </div>
+        <div class="timer" id="timer">99</div>
+        <div class="side p2">
+          <div class="name" id="name1"></div>
+          <div class="bar"><div class="trail" id="trail1"></div><div class="hp" id="hp1"></div></div>
+          <div class="pips" id="pips1"></div>
+        </div>
+      </div>
+      <div class="combo p1" id="combo0"></div>
+      <div class="combo p2" id="combo1"></div>
+      <div class="netinfo" id="netinfo"></div>
+    </div>
+
+    <div id="banner"></div>
+
+    <section id="menu" class="screen">
+      <h1>WAREHOUSE<br /><span>FIGHTER</span></h1>
+      <p class="tag">Der härteste Arbeitskampf im Lager 3.</p>
+      <div class="buttons">
+        <button data-mode="cpu">Gegen CPU</button>
+        <button data-mode="local">2 Spieler lokal</button>
+        <button data-mode="host">Online: Raum erstellen</button>
+        <div class="join">
+          <input id="roomInput" maxlength="8" placeholder="RAUMCODE" autocomplete="off" />
+          <button data-mode="join">Beitreten</button>
+        </div>
+      </div>
+      <div class="controls">
+        <div><b>Spieler 1</b> <span id="ctrl1"></span></div>
+        <div><b>Spieler 2</b> <span id="ctrl2"></span></div>
+        <div>Zurück halten = blocken · Unten + schwer = Tiefschlag (nur geduckt blockbar) · Gamepads werden unterstützt</div>
+      </div>
+    </section>
+
+    <section id="select" class="screen hidden">
+      <h2 id="selectTitle">Wähle deinen Lagerarbeiter</h2>
+      <div class="cards" id="cards"></div>
+      <button class="back" id="selectBack">Zurück</button>
+    </section>
+
+    <section id="lobby" class="screen hidden">
+      <h2>Warte auf Gegner …</h2>
+      <p>Raumcode</p>
+      <div class="code" id="lobbyCode">-----</div>
+      <button id="copyLink">Einladungslink kopieren</button>
+      <p class="small" id="lobbyStatus"></p>
+      <button class="back" id="lobbyBack">Abbrechen</button>
+    </section>
+
+    <section id="result" class="screen hidden overlay">
+      <h2 id="resultText"></h2>
+      <div class="buttons">
+        <button id="rematch">Revanche</button>
+        <button id="toMenu">Hauptmenü</button>
+      </div>
+      <p class="small" id="resultStatus"></p>
+    </section>
+
+    <script type="module" src="/src/client/main.ts"></script>
+  </body>
+</html>

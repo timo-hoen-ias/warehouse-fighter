@@ -1,0 +1,17 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "warehouse-fighter",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-10-01",
+  // Vite baut das Frontend nach ./dist, der Worker liefert es als Static Assets aus.
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "MATCH_ROOM", "class_name": "MatchRoom" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["MatchRoom"] }],
+  "observability": { "enabled": true }
+}
