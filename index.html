@@ -2,7 +2,11 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="theme-color" content="#12161c" />
     <title>Warehouse Fighter</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>" />
   </head>
@@ -29,6 +33,21 @@
     </div>
 
     <div id="banner"></div>
+
+    <div id="touch" class="hidden">
+      <div id="stickZone">
+        <div id="stickBase"><div id="stickKnob"></div></div>
+        <span class="hint">Stick: bewegen · 2× vor = Dash</span>
+      </div>
+      <div id="pad">
+        <button data-bits="64" class="sp">Spezial</button>
+        <button data-bits="32" class="hv">Schwer</button>
+        <button data-bits="144" class="th">Wurf</button>
+        <button data-bits="16" class="li">Leicht</button>
+        <button data-bits="128" class="ki">Tritt</button>
+      </div>
+      <button id="touchPause" aria-label="Pause">❚❚</button>
+    </div>
 
     <section id="menu" class="screen">
       <h1>WAREHOUSE<br /><span>FIGHTER</span></h1>

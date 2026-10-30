@@ -129,3 +129,87 @@ button.alt { background: #ff9800; }
 .guide .pick { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; color: #fff; }
 .guide select { font: inherit; padding: 4px 8px; border-radius: 4px; border: 2px solid #000; }
 @media (max-width: 640px) { .guide td.in { white-space: normal; } }
+
+/* --- Handy / Touch --------------------------------------------------------- */
+html, body {
+  touch-action: manipulation; /* kein Doppeltipp-Zoom (iOS), schnelle Doppeltipps kommen an */
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+}
+canvas#game { touch-action: none; }
+input, select { -webkit-user-select: text; user-select: text; }
+.screen { overflow-y: auto; justify-content: safe center; padding: max(16px, env(safe-area-inset-top)) 16px max(16px, env(safe-area-inset-bottom)); }
+
+body { --game-h: 100dvh; }
+#touch { position: fixed; left: 0; right: 0; top: 0; bottom: 0; z-index: 5; pointer-events: none; touch-action: none; }
+#touch > * { pointer-events: auto; }
+#stickZone { position: absolute; left: 0; bottom: 0; width: 50%; height: 60%; touch-action: none; }
+#stickZone .hint { position: absolute; left: 12px; bottom: max(10px, env(safe-area-inset-bottom)); font-family: system-ui; font-size: 11px; color: rgba(255, 255, 255, 0.45); pointer-events: none; }
+#stickBase {
+  position: absolute; left: -60px; top: -60px; width: 120px; height: 120px; border-radius: 50%;
+  border: 3px solid rgba(255, 204, 0, 0.5); background: rgba(0, 0, 0, 0.25); transform: translate(90px, 120px);
+  pointer-events: none; opacity: 0.55; transition: opacity 0.15s;
+}
+#stickBase.active { opacity: 1; }
+#stickKnob {
+  position: absolute; left: 32px; top: 32px; width: 56px; height: 56px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe680, #ff9f00); border: 3px solid #000; box-shadow: 0 3px 0 #000;
+}
+#pad {
+  position: absolute; right: max(12px, env(safe-area-inset-right)); bottom: max(14px, env(safe-area-inset-bottom));
+  display: grid; grid-template-columns: repeat(2, 76px); grid-auto-rows: 76px; gap: 12px;
+  grid-template-areas: 'sp hv' 'li ki' 'th th';
+}
+#pad button {
+  width: 100%; height: 100%; padding: 0; border-radius: 50%; font-size: 12px; touch-action: none;
+  background: rgba(255, 204, 0, 0.85); opacity: 0.92;
+}
+#pad button.down { transform: translateY(3px) scale(0.95); box-shadow: 0 1px 0 #000; background: #fff176; }
+#pad .sp { grid-area: sp; background: rgba(255, 152, 0, 0.9); }
+#pad .hv { grid-area: hv; }
+#pad .li { grid-area: li; }
+#pad .ki { grid-area: ki; }
+#pad .th { grid-area: th; border-radius: 38px; background: rgba(120, 144, 156, 0.95); color: #fff; height: 56px; align-self: center; }
+#touchPause {
+  position: absolute; right: max(10px, env(safe-area-inset-right)); top: 64px; width: 44px; height: 40px; padding: 0;
+  font-size: 14px; background: rgba(18, 22, 28, 0.75); color: #fff; touch-action: none;
+}
+body.touch .netinfo { display: none; }
+
+/* Hochformat: Spielbild oben, Steuerung darunter */
+@media (orientation: portrait) {
+  body.touch.fighting { --game-h: 54dvh; }
+  body.touch.fighting canvas#game { bottom: auto; height: var(--game-h); }
+  body.touch #touch { top: var(--game-h); background: linear-gradient(180deg, #1b2129, #0d1014); border-top: 6px solid transparent;
+    border-image: repeating-linear-gradient(-45deg, var(--yellow) 0 12px, #111 12px 24px) 6; }
+  body.touch #stickZone { width: 52%; height: 100%; }
+  body.touch #pad { right: max(16px, env(safe-area-inset-right)); bottom: max(18px, env(safe-area-inset-bottom)); grid-template-columns: repeat(2, 84px); grid-auto-rows: 84px; }
+  body.touch #pad button { opacity: 1; font-size: 13px; }
+  body.touch #touchPause { top: 12px; left: max(12px, env(safe-area-inset-left)); right: auto; }
+  body.touch .bars { padding: max(8px, env(safe-area-inset-top)) 8px 8px; gap: 6px; }
+  body.touch .name { font-size: 12px; }
+  body.touch .bar { height: 16px; border-width: 2px; }
+  body.touch .timer { min-width: 48px; font-size: 26px; padding: 2px 4px; }
+  body.touch .pips { height: 10px; }
+  body.touch .pips i { width: 10px; height: 10px; }
+  body.touch #banner { top: 20dvh; font-size: 40px; }
+  body.touch .combo { top: 12dvh; font-size: 18px; }
+}
+
+/* Querformat auf dem Handy: Steuerung halbtransparent über dem Bild */
+@media (orientation: landscape) {
+  body.touch #pad { grid-template-columns: repeat(2, 64px); grid-auto-rows: 64px; gap: 10px; }
+  body.touch #pad button { opacity: 0.7; }
+  body.touch #touchPause { top: 76px; left: 50%; right: auto; transform: translateX(-50%); }
+  body.touch .bars { padding: 8px max(12px, env(safe-area-inset-left)); }
+}
+
+@media (max-width: 640px) {
+  .buttons { width: 100%; max-width: 360px; }
+  button { font-size: 16px; padding: 11px 14px; }
+  .options label { font-size: 14px; flex-wrap: wrap; }
+  .options .choice { min-width: 0; }
+  .guide { max-height: none; font-size: 13px; padding: 10px; }
+  .guide table { display: block; overflow-x: auto; }
+  .tabs button { font-size: 12px; padding: 6px 9px; }
+}
+.screen { z-index: 10; }

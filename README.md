@@ -85,6 +85,15 @@ Kombos mit Schwierigkeitsgrad, die komplette Befehlsliste jedes Kämpfers und di
 - **Optionen:** Retro-Filter, Blut, Musik an/aus, Musiktitel (mit Vorschau), Musik- und Effekt-Lautstärke, Ansager.
   Alles wird im Browser gespeichert. `Esc` geht in jedem Untermenü zurück.
 
+## Handy
+
+Auf dem Handy erscheint automatisch eine **Touch-Steuerung**. Hochkant liegt das Spielbild oben und die Steuerung darunter,
+quer liegt die Steuerung halbtransparent über dem Bild.
+
+- Linke Hälfte: schwebender **Stick** (irgendwo hintippen und ziehen). Zweimal kurz nach vorn = Dash, hoch = Springen, runter = Ducken.
+- Rechts: **Leicht, Schwer, Tritt, Spezial** und eine eigene **Wurf**-Taste, dazu ein Pause-Knopf.
+- Auf iOS sind Doppeltipp-Zoom, Pinch-Zoom und das Kontextmenü beim langen Drücken abgeschaltet, damit Doppeltipps (Dash) ankommen.
+
 ## Steuerung
 
 | Aktion | Spieler 1 | Spieler 2 | Gamepad |
@@ -183,4 +192,3 @@ dafür spürt man die Latenz zum nächsten Cloudflare-Standort (in Europa typisc
 - Wand-Kombos, Konter und Seitwärtsschritt (Tekken-Sidestep)
 - Richtige 3D-Modelle (glTF) mit Animationen statt Grundkörpern
 - Matchmaking-Queue statt nur Raumcodes, Ranglisten via D1
-- Touch-Steuerung für Smartphones

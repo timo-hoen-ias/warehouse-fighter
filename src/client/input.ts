@@ -1,4 +1,5 @@
 import { INPUT } from '../shared/game';
+import { readTouch } from './touch';
 
 type Layout = Record<string, number>;
 
@@ -77,8 +78,9 @@ function readGamepad(index: number) {
 
 /** Eingabe für einen Spieler. `solo`: beide Tastatur-Belegungen steuern denselben Kämpfer. */
 export function readInput(player: 0 | 1, solo: boolean): number {
-  if (solo) return readLayout(P1) | readLayout(P2) | readGamepad(0);
-  return player === 0 ? readLayout(P1) | readGamepad(0) : readLayout(P2) | readGamepad(1);
+  // Touch steuert immer den eigenen Kämpfer (Spieler 1 bzw. online den eigenen Slot)
+  if (solo) return readLayout(P1) | readLayout(P2) | readGamepad(0) | readTouch();
+  return player === 0 ? readLayout(P1) | readGamepad(0) | readTouch() : readLayout(P2) | readGamepad(1);
 }
 
 /** Kurzhilfe für Menü und HUD. */
