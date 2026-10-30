@@ -22,6 +22,7 @@ import {
   unlockAudio,
 } from './audio';
 import { initKeyboard, readInput } from './input';
+import { initTouch, isTouchDevice } from './touch';
 import { NetClient, createRoom } from './net';
 import { GameRenderer } from './renderer';
 
@@ -35,6 +36,18 @@ function show(screen: (typeof screens)[number] | null) {
 
 const renderer = new GameRenderer($<HTMLCanvasElement>('game'));
 initKeyboard();
+
+// Handy: Touch-Steuerung und Hochformat-Layout
+const touch = isTouchDevice();
+document.body.classList.toggle('touch', touch);
+if (touch) initTouch(() => onBack());
+
+/** HUD (und auf dem Handy die Touch-Steuerung) ein-/ausblenden. */
+function setHud(on: boolean) {
+  $('hud').classList.toggle('hidden', !on);
+  $('touch').classList.toggle('hidden', !on || !touch);
+  document.body.classList.toggle('fighting', on);
+}
 
 // --- Zustand -------------------------------------------------------------
 let mode: Mode = 'cpu';
@@ -223,7 +236,7 @@ function beginMatch(chars: [string, string]) {
   renderer.smoothing = mode === 'online';
   $('name0').textContent = names[0];
   $('name1').textContent = names[1];
-  $('hud').classList.remove('hidden');
+  setHud(true);
   show(null);
   running = true;
   paused = false;
@@ -244,7 +257,7 @@ function toMenu() {
   pendingRoom = null;
   startMusic('menu');
   setMusicLevel(1);
-  $('hud').classList.add('hidden');
+  setHud(false);
   history.replaceState(null, '', location.pathname);
   showPanel('main');
   show('menu');
@@ -392,7 +405,7 @@ async function connectOnline(char: string, stage: string) {
     },
     onOpponentLeft() {
       running = false;
-      $('hud').classList.add('hidden');
+      setHud(false);
       show('lobby');
       $('lobbyStatus').textContent = 'Gegner hat den Raum verlassen. Warte auf neuen Gegner …';
     },
@@ -403,7 +416,7 @@ async function connectOnline(char: string, stage: string) {
       if (!net) return;
       net = null;
       running = false;
-      $('hud').classList.add('hidden');
+      setHud(false);
       show('lobby');
       $('lobbyStatus').textContent = text;
     },
@@ -612,6 +625,9 @@ function renderGuide(tab: GuideTab) {
         <tr><td>Wurf</td><td class="in">F + V</td><td class="in">, + M</td><td class="in">RB / R1</td></tr>
         <tr><td>Pause</td><td class="in" colspan="2">Esc oder P</td><td class="in">Start</td></tr>
       </table>
+      <p class="intro"><b>Handy:</b> Linke Bildschirmhälfte ist ein Stick (überall hintippen und ziehen), zweimal kurz nach vorn = Dash,
+        nach oben = Springen, nach unten = Ducken. Rechts liegen Leicht, Schwer, Tritt, Spezial und eine eigene Wurf-Taste, oben rechts die Pause.
+        Am besten hochkant spielen.</p>
       <p class="intro">Gegen CPU und online funktionieren beide Tastaturbelegungen. Ziffernblock für Spieler 2: 1 leicht, 2 schwer, 3 Spezial, 0 Tritt.</p>`;
   }
 }

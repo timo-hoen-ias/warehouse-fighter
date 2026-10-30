@@ -123,11 +123,14 @@ export class GameRenderer {
     this.renderer.toneMappingExposure = 1.05;
     this.resize();
     window.addEventListener('resize', () => this.resize());
+    new ResizeObserver(() => this.resize()).observe(canvas);
   }
 
   private resize() {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    // Größe des Canvas selbst (auf dem Handy im Hochformat nur der obere Teil des Bildschirms)
+    const canvas = this.renderer.domElement;
+    const w = Math.max(1, canvas.clientWidth || window.innerWidth);
+    const h = Math.max(1, canvas.clientHeight || window.innerHeight);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
@@ -143,8 +146,8 @@ export class GameRenderer {
       this.renderer.render(this.scene, this.camera);
       return;
     }
-    const w = Math.max(64, Math.floor(window.innerWidth / preset.px));
-    const h = Math.max(48, Math.floor(window.innerHeight / preset.px));
+    const w = Math.max(64, Math.floor(this.renderer.domElement.clientWidth / preset.px));
+    const h = Math.max(48, Math.floor(this.renderer.domElement.clientHeight / preset.px));
     const key = `${w}x${h}`;
     if (!this.retroTarget) {
       this.retroTarget = new THREE.WebGLRenderTarget(w, h, { type: THREE.HalfFloatType, minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, samples: 0 });
@@ -478,7 +481,8 @@ export class GameRenderer {
     const [a, b] = state.fighters;
     let focusX = (a.x + b.x) / 2;
     const sep = Math.abs(a.x - b.x);
-    const aspectFix = Math.max(1, 1.6 / this.camera.aspect);
+    // Schmale Bilder (Handy hochkant) weiter weg, aber nicht so weit, dass die Kämpfer winzig werden
+    const aspectFix = this.camera.aspect < 1 ? Math.max(1, 1.05 / this.camera.aspect) : Math.max(1, 1.6 / this.camera.aspect);
     let dist = (6.5 + sep * 0.55) * aspectFix;
     let lookY = 1.2 + Math.max(a.y, b.y) * 0.3;
     let lookZ = 0;
