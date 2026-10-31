@@ -15,6 +15,8 @@ let noiseBuf: AudioBuffer;
 export const audioSettings = {
   music: load('wf-music', true),
   announcer: load('wf-announcer', true),
+  /** Kämpfer rufen ihre Spezialmoves aus. */
+  callouts: load('wf-callouts', true),
   musicVolume: loadNumber('wf-music-vol', 0.8),
   sfxVolume: loadNumber('wf-sfx-vol', 1),
   /** 'auto' = Titel passend zur Arena, sonst feste Titel-ID */
@@ -114,15 +116,42 @@ function impulse(c: AudioContext, seconds: number, decay: number) {
 }
 
 /** Ausgang mit Hallanteil. */
+/** Stereo-Position der nächsten Klänge (-1 links … 1 rechts), folgt dem Geschehen auf dem Bildschirm. */
+let pan = 0;
+export function setPan(v: number) {
+  pan = Math.max(-0.85, Math.min(0.85, v));
+}
+
 function out(reverb = 0.3): AudioNode {
   const g = ctx!.createGain();
-  g.connect(dry);
+  if (pan !== 0 && typeof ctx!.createStereoPanner === 'function') {
+    const p = ctx!.createStereoPanner();
+    p.pan.value = pan;
+    g.connect(p).connect(dry);
+  } else {
+    g.connect(dry);
+  }
   if (reverb > 0) {
     const s = ctx!.createGain();
     s.gain.value = reverb;
     g.connect(s).connect(sfxWet);
   }
   return g;
+}
+
+let raspCurve: Float32Array | null = null;
+/** Weiche Sättigung für raue Stimmen. */
+function rasp(): WaveShaperNode {
+  const ws = ctx!.createWaveShaper();
+  if (!raspCurve) {
+    raspCurve = new Float32Array(1024);
+    for (let i = 0; i < 1024; i++) {
+      const x = (i / 1023) * 2 - 1;
+      raspCurve[i] = Math.tanh(x * 3.2);
+    }
+  }
+  ws.curve = raspCurve as Float32Array<ArrayBuffer>;
+  return ws;
 }
 
 interface ToneOpts {
@@ -244,70 +273,86 @@ const VOICES: Record<string, VoiceProfile> = {
   robo: { pitch: 140, formant: 1, rough: 0, robot: true },
 };
 
-const VOWELS = {
+type Vowel = 'a' | 'e' | 'u' | 'o';
+const VOWELS: Record<Vowel, readonly number[]> = {
   a: [800, 1200, 2500],
   e: [480, 1800, 2550],
   u: [360, 760, 2400],
   o: [520, 920, 2450],
-} as const;
+};
 
 export type VoiceKind = 'effort' | 'kiai' | 'hurt' | 'ko' | 'win';
 
 function vocal(p: VoiceProfile, kind: VoiceKind) {
   if (!ctx || activeVoices > MAX_VOICES - 8) return;
   const t = ctx.currentTime;
+  // Jeder Laut gleitet von einem Vokal zum nächsten („Ha-ah“, „Uo-uh“), das klingt deutlich menschlicher
+  const pick = <T,>(list: T[]) => list[Math.floor(Math.random() * list.length)];
   const spec = {
-    effort: { dur: 0.11, vowel: 'e', from: 1.05, to: 0.95, vol: 0.12, breath: 0.08 },
-    kiai: { dur: 0.22, vowel: 'a', from: 1.2, to: 0.9, vol: 0.2, breath: 0.12 },
-    hurt: { dur: 0.24, vowel: 'u', from: 1.25, to: 0.75, vol: 0.18, breath: 0.1 },
-    ko: { dur: 1.0, vowel: 'a', from: 1.35, to: 0.55, vol: 0.24, breath: 0.15 },
-    win: { dur: 0.35, vowel: 'o', from: 1.0, to: 1.25, vol: 0.18, breath: 0.08 },
+    effort: { dur: 0.12, v: pick<[Vowel, Vowel]>([['e', 'a'], ['a', 'e'], ['u', 'e']]), from: 1.05, to: 0.92, vol: 0.13, breath: 0.09 },
+    kiai: { dur: 0.26, v: pick<[Vowel, Vowel]>([['a', 'o'], ['e', 'a'], ['a', 'a']]), from: 1.15, to: 0.85, vol: 0.21, breath: 0.13 },
+    hurt: { dur: 0.26, v: pick<[Vowel, Vowel]>([['u', 'o'], ['o', 'u'], ['e', 'u']]), from: 1.3, to: 0.72, vol: 0.19, breath: 0.12 },
+    ko: { dur: 1.1, v: ['a', 'o'] as [Vowel, Vowel], from: 1.35, to: 0.5, vol: 0.25, breath: 0.16 },
+    win: { dur: 0.42, v: ['o', 'a'] as [Vowel, Vowel], from: 0.95, to: 1.3, vol: 0.19, breath: 0.08 },
   }[kind];
-  const pitch = p.pitch * rand(0.95, 1.06);
+  const pitch = p.pitch * rand(0.94, 1.07);
   if (p.robot) {
-    // Roboter: gestufte Rechteck-Piepser statt Stimme
-    const steps = kind === 'ko' ? 10 : kind === 'win' ? 4 : 3;
+    // Roboter: gestufte Rechteck-Piepser mit Modem-Rauschen statt Stimme
+    const steps = kind === 'ko' ? 10 : kind === 'win' ? 5 : 3;
     for (let i = 0; i < steps; i++) {
-      const f = pitch * 4 * (kind === 'hurt' || kind === 'ko' ? 1 - i * 0.08 : 1 + (i % 2) * 0.5);
-      tone(f, spec.dur / steps, { type: 'square', vol: spec.vol * 0.35, delay: (i * spec.dur) / steps, reverb: 0.15 });
+      const f = pitch * 4 * (kind === 'hurt' || kind === 'ko' ? 1 - i * 0.08 : 1 + ((i * 7) % 3) * 0.25);
+      tone(f, spec.dur / steps, { type: 'square', vol: spec.vol * 0.32, delay: (i * spec.dur) / steps, reverb: 0.15 });
     }
     noise(spec.dur * 0.6, { type: 'bandpass', freq: 3000, q: 4, vol: 0.05 });
+    if (kind === 'hurt' || kind === 'ko') tone(pitch * 0.5, spec.dur, { type: 'sawtooth', to: pitch * 0.2, vol: 0.05 });
     return;
   }
+  const end = t + spec.dur;
   const src = ctx.createOscillator();
   src.type = 'sawtooth';
   src.frequency.setValueAtTime(pitch * spec.from, t);
-  src.frequency.linearRampToValueAtTime(pitch * (spec.from + 0.08), t + spec.dur * 0.2);
-  src.frequency.exponentialRampToValueAtTime(pitch * spec.to, t + spec.dur);
+  src.frequency.linearRampToValueAtTime(pitch * (spec.from + 0.1), t + spec.dur * 0.18);
+  src.frequency.exponentialRampToValueAtTime(pitch * spec.to, end);
   // Vibrato / Rauheit
   const lfo = ctx.createOscillator();
-  lfo.frequency.value = 5.5 + p.rough * 30;
+  lfo.frequency.value = 5.5 + p.rough * 28;
   const lfoGain = ctx.createGain();
   lfoGain.gain.value = pitch * (0.015 + p.rough * 0.06);
   lfo.connect(lfoGain).connect(src.frequency);
+  // Hüllkurve mit leichtem Flattern (Shimmer)
   const env = ctx.createGain();
   env.gain.setValueAtTime(0.0001, t);
-  env.gain.exponentialRampToValueAtTime(spec.vol, t + 0.02);
-  env.gain.setValueAtTime(spec.vol, t + spec.dur * 0.55);
-  env.gain.exponentialRampToValueAtTime(0.0001, t + spec.dur);
-  const dest = out(0.25);
-  env.connect(dest);
-  VOWELS[spec.vowel as keyof typeof VOWELS].forEach((f, i) => {
+  env.gain.exponentialRampToValueAtTime(spec.vol, t + 0.018);
+  env.gain.setValueAtTime(spec.vol, t + spec.dur * 0.5);
+  env.gain.exponentialRampToValueAtTime(0.0001, end);
+  const shimmer = ctx.createOscillator();
+  shimmer.frequency.value = 11 + Math.random() * 6;
+  const shimmerGain = ctx.createGain();
+  shimmerGain.gain.value = spec.vol * (0.08 + p.rough * 0.25);
+  shimmer.connect(shimmerGain).connect(env.gain);
+  const dest = out(0.22);
+  if (p.rough > 0.35) env.connect(rasp()).connect(dest);
+  else env.connect(dest);
+  const [v1, v2] = spec.v;
+  VOWELS[v1].forEach((f1, i) => {
+    const f2 = VOWELS[v2][i];
     const bp = ctx!.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = f * p.formant;
+    bp.frequency.setValueAtTime(f1 * p.formant, t);
+    bp.frequency.linearRampToValueAtTime(f2 * p.formant, end);
     bp.Q.value = 6 + i * 3;
     const g = ctx!.createGain();
-    g.gain.value = [1, 0.55, 0.25][i] * 2.2;
+    g.gain.value = [1, 0.55, 0.25][i] * 2.3;
     src.connect(bp).connect(g).connect(env);
   });
   track(src);
-  src.start(t);
-  src.stop(t + spec.dur + 0.05);
-  lfo.start(t);
-  lfo.stop(t + spec.dur + 0.05);
-  // Atem / Rauheit
-  noise(spec.dur * 0.5, { type: 'bandpass', freq: 1400 * p.formant, q: 1.2, vol: spec.breath + p.rough * 0.05, attack: 0.005 });
+  for (const o of [src, lfo, shimmer]) {
+    o.start(t);
+    o.stop(end + 0.05);
+  }
+  // „H“-Anhauch und Atem
+  noise(spec.dur * 0.45, { type: 'bandpass', freq: 1400 * p.formant, q: 1.2, vol: spec.breath + p.rough * 0.05, attack: 0.004 });
+  if (kind === 'hurt' || kind === 'ko') noise(0.12, { type: 'bandpass', freq: 600 * p.formant, q: 2, vol: 0.05, delay: spec.dur * 0.8 });
 }
 
 // --- Kampfgeräusche -------------------------------------------------------
@@ -324,25 +369,54 @@ export const sfx = {
   },
 
   /** Treffer: tiefer Bums + Klatschen + Klick, nach Gewicht geschichtet. Metall bei Robotern. */
-  hit(weight: Weight, combo = 1, metallic = false) {
-    if (metallic) metal(rand(500, 640), 0.3, weight === 'heavy' ? 0.14 : 0.08, 0.3);
-    const p = rand(0.94, 1.06) * (1 + Math.min(combo, 8) * 0.025);
-    const k = weight === 'heavy' ? 1 : weight === 'mid' ? 0.75 : 0.55;
-    // Körper-Bums
-    tone(150 * p, 0.14 + k * 0.12, { type: 'sine', to: 42, vol: 0.55 * k + 0.15, reverb: 0.15 });
-    // Klatschen
-    noise(0.05 + k * 0.08, { type: 'bandpass', freq: 1800 * p, to: 600, q: 0.7, vol: 0.5 * k + 0.2, reverb: 0.25 });
-    // Klick / Knacken
-    noise(0.018, { type: 'highpass', freq: 4500, vol: 0.35, reverb: 0 });
-    if (weight === 'heavy') {
-      tone(70, 0.35, { type: 'triangle', to: 30, vol: 0.4, reverb: 0.35 });
-      noise(0.3, { type: 'lowpass', freq: 500, to: 120, vol: 0.35, reverb: 0.5 });
+  hit(weight: Weight, combo = 1, metallic = false, kick = false) {
+    if (metallic) {
+      // Roboter: Blechschlag mit Funkenknistern
+      metal(rand(500, 640), 0.35, weight === 'heavy' ? 0.16 : 0.09, 0.3);
+      noise(0.09, { type: 'highpass', freq: 6000, vol: 0.12, delay: 0.02 });
     }
+    const p = rand(0.92, 1.08) * (1 + Math.min(combo, 8) * 0.025);
+    const k = weight === 'heavy' ? 1 : weight === 'mid' ? 0.75 : 0.55;
+    // Tritte klingen dumpfer, Fäuste knackiger
+    const body = kick ? 0.8 : 1;
+    // Körper-Bums mit schnellem Tonhöhen-Fall (Punch)
+    tone(165 * p * body, 0.12 + k * 0.12, { type: 'sine', to: 38, vol: 0.55 * k + 0.18, reverb: 0.12 });
+    tone(320 * p * body, 0.04, { type: 'triangle', to: 120, vol: 0.18 * k });
+    // Klatschen auf Stoff / Haut
+    noise(0.05 + k * 0.07, { type: 'bandpass', freq: (kick ? 1300 : 2000) * p, to: 550, q: 0.7, vol: 0.5 * k + 0.2, reverb: 0.22 });
+    // Transient: Klick / Knacken
+    noise(0.014, { type: 'highpass', freq: 5000, vol: 0.38, reverb: 0 });
+    if (weight !== 'light') noise(0.05, { type: 'bandpass', freq: 3200 * p, q: 3, vol: 0.12 * k, delay: 0.008 }); // Knirschen
+    if (weight === 'heavy') {
+      tone(62, 0.4, { type: 'triangle', to: 28, vol: 0.42, reverb: 0.35 });
+      noise(0.32, { type: 'lowpass', freq: 520, to: 110, vol: 0.36, reverb: 0.55 });
+      // Nachhall in der Halle: Regale scheppern leise mit
+      if (combo <= 1 || Math.random() < 0.3) metal(rand(140, 190), 0.9, 0.035, 0.9, 0.05);
+    }
+  },
+
+  /** Schritt auf dem Hallenboden – Gewicht bestimmt den Klang, der Roboter klackert. */
+  step(weight: number, robot = false) {
+    if (throttled(`step-${weight.toFixed(2)}`, 90)) return;
+    if (robot) {
+      noise(0.03, { type: 'bandpass', freq: 2400, q: 5, vol: 0.06, reverb: 0.1 });
+      tone(rand(320, 380), 0.06, { type: 'square', to: 200, vol: 0.02 });
+      return;
+    }
+    tone(rand(85, 105) / weight, 0.07 + weight * 0.03, { type: 'sine', to: 45, vol: 0.08 + weight * 0.05, reverb: 0.1 });
+    noise(0.04, { type: 'bandpass', freq: rand(900, 1300), q: 1.5, vol: 0.045, reverb: 0.1 }); // Sohle
+  },
+
+  /** Absprung. */
+  jump() {
+    if (throttled('jump', 120)) return;
+    noise(0.14, { type: 'bandpass', freq: 500, to: 1500, q: 1, vol: 0.08, attack: 0.03 });
+    noise(0.03, { type: 'bandpass', freq: 1100, q: 2, vol: 0.06 });
   },
 
   /** Blocken: Klonk wie auf einen Rollcontainer. */
   block() {
-    metal(rand(380, 440), 0.25, 0.12, 0.35);
+    metal(rand(330, 470), 0.25, 0.12, 0.35);
     noise(0.04, { type: 'highpass', freq: 3000, vol: 0.2 });
     tone(110, 0.08, { type: 'square', to: 60, vol: 0.08 });
   },
@@ -555,6 +629,35 @@ export function announce(text: string) {
   } catch {
     // Sprachausgabe nicht verfügbar
   }
+}
+
+/**
+ * Kampfruf: der Kämpfer ruft seinen Spezialmove aus – mit eigener Stimmlage.
+ * Unterbricht nie den Ansager und überspringt Rufe, solange noch gesprochen wird.
+ */
+export function callout(text: string, pitch = 1, rate = 1.15) {
+  if (!audioSettings.callouts || typeof speechSynthesis === 'undefined') return;
+  try {
+    if (speechSynthesis.speaking || speechSynthesis.pending) return;
+    if (voice === undefined) {
+      const voices = speechSynthesis.getVoices();
+      if (voices.length) voice = voices.find((v) => v.lang.startsWith('de')) ?? null;
+    }
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'de-DE';
+    if (voice) u.voice = voice;
+    u.rate = rate;
+    u.pitch = Math.max(0, Math.min(2, pitch));
+    u.volume = 0.75 * audioSettings.sfxVolume;
+    speechSynthesis.speak(u);
+  } catch {
+    // Sprachausgabe nicht verfügbar
+  }
+}
+
+export function setCalloutsEnabled(on: boolean) {
+  audioSettings.callouts = on;
+  save('wf-callouts', on);
 }
 
 // --- Musik ---------------------------------------------------------------

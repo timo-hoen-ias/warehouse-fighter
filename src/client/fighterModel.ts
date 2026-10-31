@@ -2,11 +2,12 @@ import * as THREE from 'three';
 import { type AnimKind, type CharacterDef, type MoveKey, getCharacter, moveLength } from '../shared/characters';
 import type { Fighter } from '../shared/game';
 import { type Look, type Stance, getLook } from './looks';
+import { CHAR_ANIMS, type CharAnims } from './charAnims';
 
 // Low-Poly-Lagerarbeiter aus Grundkörpern mit prozeduraler Animation.
 // Modell blickt lokal nach +x; Gelenke drehen um die lokale z-Achse.
 
-interface Pose {
+export interface Pose {
   hipY: number;
   /** Hüfte vor/zurück verschieben (Gewichtsverlagerung, Ausfallschritt) */
   hipX: number;
@@ -259,23 +260,41 @@ function easeOut(t: number) {
 function animFor(def: CharacterDef, key: MoveKey): Anim {
   const kind = def.moves[key].anim;
   if (kind && (key === 'sig1' || key === 'sig2' || key === 'ender' || !ATTACKS[key])) return KIND_ANIMS[kind];
-  return ATTACKS[key] ?? ATTACKS.light!;
+  const std = ATTACKS[key] ?? ATTACKS.light!;
+  // Eigene Ausführung des Kämpfers (z. B. Gerds Gabelstoß mit beiden Armen)
+  const own = CHAR_ANIMS[def.id]?.moves[key];
+  return own ? { base: std.base, windup: own.windup, strike: own.strike, limb: own.limb === undefined ? std.limb : own.limb } : std;
 }
 
-function targetPose(f: Fighter, def: CharacterDef, t: number, look: Look): Pose {
+const FALLBACK_ANIMS: CharAnims = { moves: {}, fidget: () => ({}), intro: () => ({}), win: () => ({}), walk: 'normal', flinch: 1 };
+
+/** Sanftes Ein- und Ausblenden einer Geste über `len` Ticks. */
+function envelope(n: number, len: number) {
+  const k = n / len;
+  return k <= 0 || k >= 1 ? 0 : Math.min(1, k * 5, (1 - k) * 5);
+}
+
+function targetPose(f: Fighter, def: CharacterDef, t: number, look: Look, intro: boolean): Pose {
   const n = f.statusTime;
   const st = STANCES[look.stance];
+  const ca = CHAR_ANIMS[def.id] ?? FALLBACK_ANIMS;
   const idle = mix(P.idle, st.idle, 1);
   switch (f.status) {
     case 'walk': {
-      const ph = t * 9 * (def.walkSpeed / 0.06) * st.stride;
+      // Gangart je Kämpfer: watscheln, federn, marschieren, schleichen
+      const tw = ca.walk === 'march' ? Math.floor(t * 10) / 10 : t;
+      const ph = tw * 9 * (def.walkSpeed / 0.06) * st.stride;
       const s = Math.sin(ph) * f.facing * Math.sign(f.vx || 1);
+      const g = { waddle: [0.35, 0.03, 0.22, 0.12], bounce: [0.5, 0.075, 0.1, 0.02], march: [0.55, 0.01, 0.05, 0], prowl: [0.4, 0.02, 0.18, 0.04], normal: [0.45, 0.035, 0.08, 0.02] }[ca.walk];
+      const [stride, bob, hipSway, leanSway] = g;
       return mix(idle, {
-        legF: 0.35 + s * 0.45, legB: -0.3 - s * 0.45,
-        kneeF: 0.35 + Math.max(0, -s) * 0.6, kneeB: 0.3 + Math.max(0, s) * 0.6,
-        hipY: -0.05 - Math.abs(Math.cos(ph)) * 0.035,
-        twist: 0.15 + s * 0.12, hipTwist: -s * 0.08,
-        armB: 0.5 - s * 0.2, foreF: 1.6 + s * 0.15,
+        legF: 0.35 + s * stride, legB: -0.3 - s * stride,
+        kneeF: 0.35 + Math.max(0, -s) * (ca.walk === 'march' ? 1.0 : 0.6), kneeB: 0.3 + Math.max(0, s) * (ca.walk === 'march' ? 1.0 : 0.6),
+        hipY: idle.hipY - Math.abs(Math.cos(ph)) * bob,
+        twist: idle.twist + s * 0.12, hipTwist: -s * hipSway,
+        lean: idle.lean + Math.cos(ph * 2) * leanSway,
+        armB: idle.armB - s * (ca.walk === 'march' ? 0.5 : 0.2), foreF: idle.foreF + s * 0.15,
+        armF: ca.walk === 'march' ? idle.armF + s * 0.4 : idle.armF,
       }, 1);
     }
     case 'dash': {
@@ -290,7 +309,8 @@ function targetPose(f: Fighter, def: CharacterDef, t: number, look: Look): Pose 
       return f.vy > 0.05 ? mix(P.jump, { legF: 0.8, kneeF: 1.0, legB: 0.1, kneeB: 0.8 }, 0.6) : P.jump;
     case 'hitstun': {
       if (f.launched || f.y > 0.05) return mix(P.airborne, { lean: -1.1 - Math.min(0.5, n * 0.02) }, 1);
-      const base = f.lastHit === 'high' ? P.hitHigh : f.lastHit === 'low' ? P.hitLow : P.hitMid;
+      // Schwergewichte wanken weniger, Leichtgewichte fliegen fast aus den Schuhen
+      const base = mix(idle, f.lastHit === 'high' ? P.hitHigh : f.lastHit === 'low' ? P.hitLow : P.hitMid, ca.flinch);
       // Nach dem Treffer langsam zurück in die Grundhaltung
       return mix(base, idle, Math.max(0, Math.min(1, (n - f.stun * 0.5) / Math.max(1, f.stun * 0.5))));
     }
@@ -304,10 +324,9 @@ function targetPose(f: Fighter, def: CharacterDef, t: number, look: Look): Pose 
       const k = n / GETUP_TICKS;
       return k < 0.6 ? mix(P.ko, P.crouch, easeOut(k / 0.6)) : mix(P.crouch, idle, easeOut((k - 0.6) / 0.4));
     }
-    case 'win': {
-      const b = Math.abs(Math.sin(t * 6)) * 0.12;
-      return mix(P.win, { hipY: -0.05 + b, armF: 2.9 - b * 2 }, 1);
-    }
+    case 'win':
+      // eigene Siegerpose
+      return mix(idle, ca.win(t, n), Math.min(1, n / 12));
     case 'attack': {
       const m = def.moves[f.move!];
       const anim = animFor(def, f.move!);
@@ -331,6 +350,13 @@ function targetPose(f: Fighter, def: CharacterDef, t: number, look: Look): Pose 
     }
     default: {
       if (f.guarding) return mix(P.guard, st.guard, 1);
+      // Rundeneröffnung: eigene Intro-Pose, kurz vor „Schichtbeginn“ in die Kampfhaltung
+      if (intro && n < 95) return mix(idle, ca.intro(t, n), Math.min(1, (95 - n) / 15));
+      // Leerlauf-Geste, wenn man eine Weile still steht (alle 4 Sekunden für knapp eine Sekunde)
+      if (f.status === 'idle' && n > 150) {
+        const k = envelope((n - 150) % 240, 55);
+        if (k > 0) return mix(idle, ca.fidget(t, n), k);
+      }
       // Kampfhaltung: atmen, Gewicht verlagern, wippen – Tempo und Ausschlag je nach Kampfstil
       const tt = look.stance === 'robot' ? Math.floor(t * 8) / 8 : t;
       const b = Math.sin(tt * st.bobSpeed) * st.bob;
@@ -900,7 +926,7 @@ export class FighterModel {
   }
 
   /** `smooth`: Online-Snapshots kommen mit 30 Hz – Position weich nachziehen. */
-  update(f: Fighter, time: number, dt: number, smooth = false) {
+  update(f: Fighter, time: number, dt: number, smooth = false, intro = false) {
     const target = this.tmpTarget.set(f.x, f.y, 0).add(this.offset);
     if (smooth && this.root.position.distanceTo(target) < 1.5) {
       this.root.position.lerp(target, 1 - Math.pow(0.000001, dt));
@@ -915,7 +941,7 @@ export class FighterModel {
 
     // Gelenke folgen der Zielpose als gedämpfte Federn – gibt Schwung und leichtes Nachfedern.
     // Der Kampfstil bestimmt, wie zackig: Roboter schnappt hart, Schwergewichte schwingen nach.
-    const goal = targetPose(f, this.def, time, this.look);
+    const goal = targetPose(f, this.def, time, this.look, intro);
     const snap = STANCES[this.look.stance].snap;
     const robot = this.look.stance === 'robot';
     const stiffness = (f.status === 'attack' ? 1100 : f.status === 'hitstun' ? 1400 : f.status === 'ko' || f.status === 'down' ? 120 : 320) * snap;
