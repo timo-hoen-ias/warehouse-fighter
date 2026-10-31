@@ -135,8 +135,27 @@ interface ToneOpts {
   dest?: AudioNode;
 }
 
+// Schutz vor Klangbrei: begrenzt gleichzeitige Quellen und doppelte Auslöser im selben Moment.
+const MAX_VOICES = 72;
+let activeVoices = 0;
+function track(src: AudioScheduledSourceNode) {
+  activeVoices += 1;
+  src.onended = () => {
+    activeVoices -= 1;
+    src.disconnect();
+  };
+}
+const lastPlayed: Record<string, number> = {};
+/** true, wenn der Klang `key` in den letzten `ms` Millisekunden schon lief. */
+function throttled(key: string, ms: number) {
+  const now = performance.now();
+  if (now - (lastPlayed[key] ?? -1e9) < ms) return true;
+  lastPlayed[key] = now;
+  return false;
+}
+
 function tone(freq: number, dur: number, o: ToneOpts = {}) {
-  if (!ctx) return;
+  if (!ctx || activeVoices > MAX_VOICES) return;
   const t = ctx.currentTime + (o.delay ?? 0);
   const osc = ctx.createOscillator();
   const gain = ctx.createGain();
@@ -149,6 +168,7 @@ function tone(freq: number, dur: number, o: ToneOpts = {}) {
   gain.gain.exponentialRampToValueAtTime(vol, t + attack);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   osc.connect(gain).connect(o.dest ?? out(o.reverb ?? 0.2));
+  track(osc);
   osc.start(t);
   osc.stop(t + dur + 0.02);
 }
@@ -166,7 +186,7 @@ interface NoiseOpts {
 }
 
 function noise(dur: number, o: NoiseOpts = {}) {
-  if (!ctx) return;
+  if (!ctx || activeVoices > MAX_VOICES) return;
   const t = ctx.currentTime + (o.delay ?? 0);
   const src = ctx.createBufferSource();
   src.buffer = noiseBuf;
@@ -183,6 +203,7 @@ function noise(dur: number, o: NoiseOpts = {}) {
   gain.gain.exponentialRampToValueAtTime(vol, t + attack);
   gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
   src.connect(filter).connect(gain).connect(o.dest ?? out(o.reverb ?? 0.2));
+  track(src);
   src.start(t, Math.random() * 1.5);
   src.stop(t + dur + 0.02);
 }
@@ -196,6 +217,99 @@ function metal(base: number, dur: number, vol: number, reverb = 0.5, delay = 0, 
 
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
+// --- Stimmen ---------------------------------------------------------------
+// Synthetische Kampfschreie: Sägezahn als Stimmbänder, drei Bandpässe als Vokal-Formanten,
+// davor ein Hauch Rauschen fürs „H“. Jeder Kämpfer hat eigene Tonhöhe und Klangfarbe.
+
+interface VoiceProfile {
+  /** Grundton in Hz */
+  pitch: number;
+  /** Formant-Verschiebung (kleiner = größerer Körper) */
+  formant: number;
+  /** Rauheit 0..1 */
+  rough: number;
+  robot?: boolean;
+}
+
+const VOICES: Record<string, VoiceProfile> = {
+  gerd: { pitch: 98, formant: 0.86, rough: 0.55 },
+  kim: { pitch: 235, formant: 1.18, rough: 0.15 },
+  piet: { pitch: 132, formant: 1, rough: 0.3 },
+  lena: { pitch: 205, formant: 1.12, rough: 0.12 },
+  ludger: { pitch: 84, formant: 0.8, rough: 0.7 },
+  paul: { pitch: 175, formant: 1.08, rough: 0.15 },
+  ingrid: { pitch: 192, formant: 1.06, rough: 0.25 },
+  kalle: { pitch: 110, formant: 0.9, rough: 0.45 },
+  rita: { pitch: 188, formant: 1.08, rough: 0.3 },
+  robo: { pitch: 140, formant: 1, rough: 0, robot: true },
+};
+
+const VOWELS = {
+  a: [800, 1200, 2500],
+  e: [480, 1800, 2550],
+  u: [360, 760, 2400],
+  o: [520, 920, 2450],
+} as const;
+
+export type VoiceKind = 'effort' | 'kiai' | 'hurt' | 'ko' | 'win';
+
+function vocal(p: VoiceProfile, kind: VoiceKind) {
+  if (!ctx || activeVoices > MAX_VOICES - 8) return;
+  const t = ctx.currentTime;
+  const spec = {
+    effort: { dur: 0.11, vowel: 'e', from: 1.05, to: 0.95, vol: 0.12, breath: 0.08 },
+    kiai: { dur: 0.22, vowel: 'a', from: 1.2, to: 0.9, vol: 0.2, breath: 0.12 },
+    hurt: { dur: 0.24, vowel: 'u', from: 1.25, to: 0.75, vol: 0.18, breath: 0.1 },
+    ko: { dur: 1.0, vowel: 'a', from: 1.35, to: 0.55, vol: 0.24, breath: 0.15 },
+    win: { dur: 0.35, vowel: 'o', from: 1.0, to: 1.25, vol: 0.18, breath: 0.08 },
+  }[kind];
+  const pitch = p.pitch * rand(0.95, 1.06);
+  if (p.robot) {
+    // Roboter: gestufte Rechteck-Piepser statt Stimme
+    const steps = kind === 'ko' ? 10 : kind === 'win' ? 4 : 3;
+    for (let i = 0; i < steps; i++) {
+      const f = pitch * 4 * (kind === 'hurt' || kind === 'ko' ? 1 - i * 0.08 : 1 + (i % 2) * 0.5);
+      tone(f, spec.dur / steps, { type: 'square', vol: spec.vol * 0.35, delay: (i * spec.dur) / steps, reverb: 0.15 });
+    }
+    noise(spec.dur * 0.6, { type: 'bandpass', freq: 3000, q: 4, vol: 0.05 });
+    return;
+  }
+  const src = ctx.createOscillator();
+  src.type = 'sawtooth';
+  src.frequency.setValueAtTime(pitch * spec.from, t);
+  src.frequency.linearRampToValueAtTime(pitch * (spec.from + 0.08), t + spec.dur * 0.2);
+  src.frequency.exponentialRampToValueAtTime(pitch * spec.to, t + spec.dur);
+  // Vibrato / Rauheit
+  const lfo = ctx.createOscillator();
+  lfo.frequency.value = 5.5 + p.rough * 30;
+  const lfoGain = ctx.createGain();
+  lfoGain.gain.value = pitch * (0.015 + p.rough * 0.06);
+  lfo.connect(lfoGain).connect(src.frequency);
+  const env = ctx.createGain();
+  env.gain.setValueAtTime(0.0001, t);
+  env.gain.exponentialRampToValueAtTime(spec.vol, t + 0.02);
+  env.gain.setValueAtTime(spec.vol, t + spec.dur * 0.55);
+  env.gain.exponentialRampToValueAtTime(0.0001, t + spec.dur);
+  const dest = out(0.25);
+  env.connect(dest);
+  VOWELS[spec.vowel as keyof typeof VOWELS].forEach((f, i) => {
+    const bp = ctx!.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = f * p.formant;
+    bp.Q.value = 6 + i * 3;
+    const g = ctx!.createGain();
+    g.gain.value = [1, 0.55, 0.25][i] * 2.2;
+    src.connect(bp).connect(g).connect(env);
+  });
+  track(src);
+  src.start(t);
+  src.stop(t + spec.dur + 0.05);
+  lfo.start(t);
+  lfo.stop(t + spec.dur + 0.05);
+  // Atem / Rauheit
+  noise(spec.dur * 0.5, { type: 'bandpass', freq: 1400 * p.formant, q: 1.2, vol: spec.breath + p.rough * 0.05, attack: 0.005 });
+}
+
 // --- Kampfgeräusche -------------------------------------------------------
 
 export type Weight = 'light' | 'mid' | 'heavy';
@@ -203,13 +317,15 @@ export type Weight = 'light' | 'mid' | 'heavy';
 export const sfx = {
   /** Luftzug: Bandpass-Sweep, schwere Moves tiefer und länger. */
   swing(weight: Weight = 'light', kick = false) {
+    if (throttled(`swing-${weight}`, 40)) return;
     const dur = weight === 'heavy' ? 0.26 : weight === 'mid' ? 0.18 : 0.12;
     const f = (kick ? 700 : 1100) * rand(0.9, 1.15);
     noise(dur, { type: 'bandpass', freq: f, to: f * 3.2, q: 1.6, vol: weight === 'heavy' ? 0.22 : 0.13, attack: dur * 0.5, reverb: 0.05 });
   },
 
-  /** Treffer: tiefer Bums + Klatschen + Klick, nach Gewicht geschichtet. */
-  hit(weight: Weight, combo = 1) {
+  /** Treffer: tiefer Bums + Klatschen + Klick, nach Gewicht geschichtet. Metall bei Robotern. */
+  hit(weight: Weight, combo = 1, metallic = false) {
+    if (metallic) metal(rand(500, 640), 0.3, weight === 'heavy' ? 0.14 : 0.08, 0.3);
     const p = rand(0.94, 1.06) * (1 + Math.min(combo, 8) * 0.025);
     const k = weight === 'heavy' ? 1 : weight === 'mid' ? 0.75 : 0.55;
     // Körper-Bums
@@ -319,6 +435,91 @@ export const sfx = {
   /** Hupe zum Schichtbeginn. */
   horn() {
     for (const f of [185, 233]) tone(f, 0.7, { type: 'sawtooth', vol: 0.09, attack: 0.03, reverb: 0.6 });
+  },
+
+  /** Kampfschrei bzw. Schmerzlaut des Kämpfers. */
+  voice(char: string, kind: VoiceKind) {
+    // pro Kämpfer nicht öfter als alle 0,18 s, damit Ketten nicht zum Dauerbrüllen werden
+    if (kind !== 'ko' && throttled(`voice-${char}`, kind === 'hurt' ? 260 : 180)) return;
+    vocal(VOICES[char] ?? VOICES.piet, kind);
+  },
+
+  /** Konter: heller Klang wie ein angeschlagenes Regalrohr, dazu ein Luftzug. */
+  parry() {
+    metal(1250, 0.6, 0.16, 0.6);
+    tone(2400, 0.25, { type: 'triangle', to: 3200, vol: 0.08, reverb: 0.5 });
+    noise(0.2, { type: 'bandpass', freq: 2000, to: 6000, q: 1.2, vol: 0.12 });
+  },
+
+  /** Panzerung: dumpfes Blech. */
+  armor() {
+    metal(190, 0.5, 0.2, 0.4);
+    tone(70, 0.25, { type: 'sine', to: 45, vol: 0.4 });
+    noise(0.08, { type: 'lowpass', freq: 1200, vol: 0.25 });
+  },
+
+  /** Würfe gelöst: Klatschen und Abstoßen. */
+  tech() {
+    noise(0.06, { type: 'bandpass', freq: 2200, q: 0.7, vol: 0.35 });
+    noise(0.18, { type: 'bandpass', freq: 600, to: 1800, q: 1, vol: 0.12, delay: 0.04 });
+  },
+
+  /** Landung nach dem Sprung. */
+  land() {
+    if (throttled('land', 80)) return;
+    tone(110, 0.12, { type: 'sine', to: 50, vol: 0.25, reverb: 0.2 });
+    noise(0.08, { type: 'lowpass', freq: 700, vol: 0.15 });
+  },
+
+  /** Kombo-Limit erreicht: der Gegner kommt frei. */
+  release() {
+    tone(900, 0.35, { type: 'triangle', to: 300, vol: 0.08, reverb: 0.4 });
+    noise(0.3, { type: 'highpass', freq: 3000, to: 900, vol: 0.06 });
+  },
+
+  /** Robo-Servo beim Schlagen. */
+  servo() {
+    if (throttled('servo', 90)) return;
+    tone(rand(380, 460), 0.14, { type: 'sawtooth', to: rand(700, 900), vol: 0.035, reverb: 0.05 });
+  },
+
+  /** Signatur-Geräusch des Kämpfers beim Spezialmove. */
+  signature(char: string) {
+    switch (char) {
+      case 'gerd': // Rückfahrwarner des Staplers
+        for (let i = 0; i < 2; i++) tone(1050, 0.1, { type: 'square', vol: 0.06, delay: i * 0.16, reverb: 0.3 });
+        break;
+      case 'ludger': // Lkw-Hupe
+        for (const f of [155, 196]) tone(f, 0.45, { type: 'sawtooth', vol: 0.1, attack: 0.02, reverb: 0.5 });
+        break;
+      case 'kim': // Scanner-Piep
+        tone(2600, 0.07, { type: 'square', vol: 0.06 });
+        break;
+      case 'piet': // Klebeband abreißen
+        noise(0.25, { type: 'bandpass', freq: 3500, to: 1500, q: 2.5, vol: 0.14 });
+        break;
+      case 'lena': // Kugelschreiber-Klick
+        noise(0.015, { type: 'highpass', freq: 5000, vol: 0.2 });
+        noise(0.015, { type: 'highpass', freq: 4000, vol: 0.18, delay: 0.07 });
+        break;
+      case 'paul': // Kaffee schwappt
+        noise(0.25, { type: 'bandpass', freq: 900, to: 400, q: 4, vol: 0.12 });
+        break;
+      case 'ingrid': // Zähler-Klacken
+        for (let i = 0; i < 3; i++) noise(0.02, { type: 'bandpass', freq: 2500, q: 3, vol: 0.15, delay: i * 0.05 });
+        break;
+      case 'kalle': // Eiskristalle
+        metal(1800, 0.35, 0.05, 0.6);
+        noise(0.3, { type: 'highpass', freq: 6000, vol: 0.08 });
+        break;
+      case 'rita': // Ratsche
+        for (let i = 0; i < 5; i++) noise(0.015, { type: 'bandpass', freq: 1800, q: 4, vol: 0.14, delay: i * 0.035 });
+        break;
+      case 'robo':
+        tone(300, 0.3, { type: 'sawtooth', to: 1200, vol: 0.05 });
+        tone(1200, 0.08, { type: 'square', vol: 0.04, delay: 0.3 });
+        break;
+    }
   },
 
   /** Kurzer Akzent, wenn eine Kombo wächst. */

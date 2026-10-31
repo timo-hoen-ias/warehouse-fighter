@@ -92,10 +92,10 @@ function banner(text: string) {
 }
 
 const comboTimers: number[] = [0, 0];
-function showCombo(attacker: 0 | 1, count: number) {
-  if (count < 2) return;
+function showCombo(attacker: 0 | 1, count: number, text?: string) {
+  if (count < 2 && !text) return;
   const el = $(`combo${attacker}`);
-  el.textContent = `${count} TREFFER!`;
+  el.textContent = text ?? `${count} TREFFER!`;
   el.classList.add('show');
   clearTimeout(comboTimers[attacker]);
   comboTimers[attacker] = window.setTimeout(() => el.classList.remove('show'), 900);
@@ -116,10 +116,16 @@ function updateHud() {
   $('netinfo').textContent = net ? `${stage} · Online · Ping ${net.ping} ms · Du bist Spieler ${mySlot + 1}` : info;
 }
 
-const HEAVY_MOVES = new Set<MoveKey>(['heavy', 'finisher', 'launcher', 'overhead', 'rush', 'throw', 'fwdKick', 'special']);
+const HEAVY_MOVES = new Set<MoveKey>(['heavy', 'finisher', 'launcher', 'overhead', 'rush', 'throw', 'fwdKick', 'special', 'sig1', 'sig2', 'ender']);
 const MID_MOVES = new Set<MoveKey>(['kick', 'kick2', 'lowKick', 'fwdLight', 'air', 'airKick', 'low']);
 const KICK_MOVES = new Set<MoveKey>(['kick', 'kick2', 'lowKick', 'fwdKick', 'airKick', 'low']);
-const weightOf = (m: MoveKey): Weight => (HEAVY_MOVES.has(m) ? 'heavy' : MID_MOVES.has(m) ? 'mid' : 'light');
+/** Gewicht für den Klang – Mehrfachtreffer klingen leichter, damit es nicht dröhnt. */
+function weightOf(m: MoveKey, char?: string): Weight {
+  const def = char ? getCharacter(char).moves[m] : null;
+  if (def?.hits && def.hits > 1) return 'mid';
+  return HEAVY_MOVES.has(m) ? 'heavy' : MID_MOVES.has(m) ? 'mid' : 'light';
+}
+const charOf = (slot: 0 | 1) => state.fighters[slot].char;
 const ROUND_WORDS = ['eins', 'zwei', 'drei', 'vier', 'fünf'];
 
 function handleEvents(events: GameEvent[]) {
@@ -136,9 +142,36 @@ function handleEvents(events: GameEvent[]) {
         sfx.horn();
         announce('Schichtbeginn!');
         break;
-      case 'swing':
-        if (e.move === 'throw') sfx.grab();
-        else sfx.swing(weightOf(e.move), KICK_MOVES.has(e.move));
+      case 'swing': {
+        const c = charOf(e.player);
+        const m = getCharacter(c).moves[e.move];
+        if (m.grab) sfx.grab();
+        else sfx.swing(weightOf(e.move, c), KICK_MOVES.has(e.move) || m.anim === 'spinKick' || m.anim === 'slide');
+        if (e.move === 'sig1' || e.move === 'sig2') sfx.signature(c);
+        if (getCharacter(c).robot) sfx.servo();
+        // Kampfschreie: Spezialmoves und Abschlüsse immer, schwere oft, leichte selten
+        const heavy = HEAVY_MOVES.has(e.move);
+        if (e.move === 'sig1' || e.move === 'sig2' || e.move === 'ender' || (heavy && Math.random() < 0.6)) sfx.voice(c, 'kiai');
+        else if (Math.random() < 0.25) sfx.voice(c, 'effort');
+        break;
+      }
+      case 'land':
+        sfx.land();
+        break;
+      case 'parry':
+        sfx.parry();
+        banner('KONTER!');
+        break;
+      case 'armor':
+        sfx.armor();
+        break;
+      case 'tech':
+        sfx.tech();
+        banner('WURF GELÖST');
+        break;
+      case 'limit':
+        sfx.release();
+        showCombo(e.target === 0 ? 1 : 0, 0, 'KOMBO-LIMIT');
         break;
       case 'dash':
         sfx.dash();
@@ -146,12 +179,15 @@ function handleEvents(events: GameEvent[]) {
       case 'projectile':
         sfx.projectile(e.kind);
         break;
-      case 'hit':
-        sfx.hit(weightOf(e.move), e.combo);
+      case 'hit': {
+        const attacker = charOf(e.target === 0 ? 1 : 0);
+        sfx.hit(weightOf(e.move, attacker), e.combo, !!getCharacter(charOf(e.target)).robot);
+        if (e.heavy || Math.random() < 0.3) sfx.voice(charOf(e.target), 'hurt');
         sfx.comboTick(e.combo);
         showCombo(e.target === 0 ? 1 : 0, e.combo);
         if (e.move === 'launcher') banner('AB IN DIE LUFT!');
         break;
+      }
       case 'knockdown':
         sfx.knockdown();
         break;
@@ -161,6 +197,11 @@ function handleEvents(events: GameEvent[]) {
       case 'ko':
         banner(e.finisher === 'wall' ? 'AB INS REGAL!' : e.finisher === 'head' ? 'KOPF AB – FEIERABEND!' : 'FEIERABEND!');
         sfx.ko();
+        sfx.voice(charOf(e.loser), 'ko');
+        {
+          const winner = charOf(e.loser === 0 ? 1 : 0);
+          setTimeout(() => sfx.voice(winner, 'win'), 1600);
+        }
         if (e.finisher === 'wall') setTimeout(sfx.wallSlam, 700);
         else setTimeout(sfx.gore, 120);
         announce('Feierabend!');
@@ -312,15 +353,16 @@ function renderFighterCards() {
     const card = document.createElement('div');
     card.className = 'card';
     const vest = `#${c.colors.vest.toString(16).padStart(6, '0')}`;
-    const power = Math.round((c.moves.heavy.damage / 135) * 5);
-    const speed = Math.round((c.walkSpeed / 0.082) * 5);
-    const hp = Math.round((c.maxHp / 1250) * 5);
+    const power = Math.round(((c.moves.heavy.damage - 60) / 50) * 5);
+    const speed = Math.round(((c.walkSpeed - 0.03) / 0.052) * 5);
+    const hp = Math.round(((c.maxHp - 820) / 280) * 5);
     card.innerHTML = `
       <div class="swatch" style="background:repeating-linear-gradient(-45deg, ${vest} 0 14px, #222 14px 28px)">${c.icon}</div>
       <h3>${c.name}</h3>
       <div class="job">${c.job}</div>
       <div class="bio">${c.bio}</div>
-      <div class="stats">Kraft ${stars(power)}<br/>Tempo ${stars(speed)}<br/>Ausdauer ${stars(hp)}<br/>Spezial: ${c.moves.special.name}</div>`;
+      <div class="style">${c.style}</div>
+      <div class="stats">Kraft ${stars(power)}<br/>Tempo ${stars(speed)}<br/>Ausdauer ${stars(hp)}<br/>Spezial: ${c.moves.sig1.name}, ${c.moves.sig2.name}</div>`;
     picks.forEach((p, i) => {
       if (p === c.id) card.insertAdjacentHTML('beforeend', `<span class="badge p${i + 1}">${steps[i] === 'cpu' ? 'CPU' : `P${i + 1}`}</span>`);
     });
@@ -555,7 +597,7 @@ $<HTMLInputElement>('optSfxVol').addEventListener('change', () => sfx.hit('mid')
 
 // Kampfschule
 type GuideTab = 'basics' | 'combos' | 'moves' | 'controls';
-const MOVE_ORDER: MoveKey[] = ['light', 'light2', 'finisher', 'heavy', 'kick', 'kick2', 'fwdLight', 'fwdKick', 'overhead', 'launcher', 'lowLight', 'lowKick', 'low', 'air', 'airKick', 'special', 'rush', 'throw'];
+const MOVE_ORDER: MoveKey[] = ['sig1', 'sig2', 'ender', 'light', 'light2', 'finisher', 'heavy', 'kick', 'kick2', 'fwdLight', 'fwdKick', 'overhead', 'launcher', 'lowLight', 'lowKick', 'low', 'air', 'airKick', 'special', 'rush', 'throw'];
 let guideFighter = '';
 
 const COMBO_TABLE: [string, string, string, string][] = [
@@ -578,6 +620,13 @@ function moveTag(char: string, m: MoveKey) {
   if (def.grab) tags.push('Wurf');
   else if (def.knockdown) tags.push('wirft um');
   if (def.projectile) tags.push('Geschoss');
+  if (def.armor) tags.push(def.armor > 1 ? `Panzerung ×${def.armor}` : 'Panzerung');
+  if (def.parry) tags.push('Konter');
+  if (def.invuln) tags.push('unverwundbar');
+  if (def.hits && def.hits > 1) tags.push(`${def.hits} Treffer`);
+  if (def.hop) tags.push('Sprung');
+  if (def.slide) tags.push('rutscht unter Geschossen');
+  if (m === 'sig1' || m === 'sig2' || m === 'ender') tags.unshift('★ eigen');
   return tags.join(' · ');
 }
 
@@ -596,19 +645,33 @@ function renderGuide(tab: GuideTab) {
         <div><h3>Runden</h3><p>Best of 3, 99 Sekunden pro Runde. Wer zuerst zwei Runden gewinnt, hat <b>Feierabend</b>. Der letzte Schlag kommt in Zeitlupe.</p></div>
       </div>`;
   } else if (tab === 'combos') {
-    const rows = COMBO_TABLE.map(([input, hits, text, diff]) => `<tr><td class="in">${input}</td><td class="hits">${hits}</td><td>${text}</td><td class="tag">${diff}</td></tr>`).join('');
+    if (!guideFighter || !CHARACTERS.some((c) => c.id === guideFighter)) guideFighter = running ? state.fighters[mode === 'online' ? mySlot : 0].char : CHARACTERS[0].id;
+    const fc = getCharacter(guideFighter);
+    const options = CHARACTERS.map((f) => `<option value="${f.id}"${f.id === fc.id ? ' selected' : ''}>${f.icon} ${f.name}</option>`).join('');
+    const own = fc.combos
+      .map((c) => `<tr class="own"><td class="in">${c.input}</td><td class="hits">${c.moves.length > 1 ? c.moves.length : '–'}</td><td><b>${c.moves.map((m) => fc.moves[m].name).join(' → ')}</b><br/>${c.text}</td><td class="tag">★ eigen</td></tr>`)
+      .join('');
+    const rows = own + COMBO_TABLE.map(([input, hits, text, diff]) => `<tr><td class="in">${input}</td><td class="hits">${hits}</td><td>${text}</td><td class="tag">${diff}</td></tr>`).join('');
     body.innerHTML = `
       <p class="intro"><b>So funktionieren Kombos:</b> Trifft ein Angriff, kannst du ihn mit dem nächsten Knopf <b>abbrechen</b> und direkt weiterschlagen.
         Drück den nächsten Knopf kurz nachdem der Schlag trifft – ein Eingabepuffer merkt sich Tastendrücke etwa eine Achtelsekunde lang.
         Wird der erste Schlag geblockt, endet die Kette. Jeder weitere Treffer macht etwas weniger Schaden, der Zähler am Bildrand zeigt die Treffer.</p>
+      <label class="pick">Kämpfer <select id="guideComboFighter">${options}</select></label>
       <table><tr><th>Eingabe</th><th>Treffer</th><th>Erklärung</th><th>Schwierigkeit</th></tr>${rows}</table>
+      <p class="intro"><b>Fair bleibt's:</b> Wer am Stück getroffen wird, kommt mit jedem Treffer schneller frei, und derselbe Schlag immer wieder wirkt kaum noch.
+        Nach spätestens acht Treffern ohne Pause fliegt man zu Boden und ist beim Aufstehen kurz unverwundbar. Würfe greifen nicht, solange man gerade blockt oder getroffen wurde.</p>
       <p class="intro"><b>Mixup-Tipp:</b> Blockt der Gegner viel, <b>werfen</b>. Duckt er, <b>Überkopf (→ + Schwer)</b>. Steht er, <b>Feger (↓ + Schwer)</b>.</p>`;
+    $<HTMLSelectElement>('guideComboFighter').addEventListener('change', (e) => {
+      guideFighter = (e.target as HTMLSelectElement).value;
+      renderGuide('combos');
+    });
   } else if (tab === 'moves') {
     if (!guideFighter || !CHARACTERS.some((c) => c.id === guideFighter)) guideFighter = running ? state.fighters[mode === 'online' ? mySlot : 0].char : CHARACTERS[0].id;
     const c = getCharacter(guideFighter);
     const options = CHARACTERS.map((f) => `<option value="${f.id}"${f.id === c.id ? ' selected' : ''}>${f.icon} ${f.name}</option>`).join('');
-    const rows = MOVE_ORDER.map((m) => `<tr><td class="in">${MOVE_INPUTS[m]}</td><td>${c.moves[m].name}</td><td class="tag">${moveTag(c.id, m)}</td></tr>`).join('');
-    body.innerHTML = `<label class="pick">Kämpfer <select id="guideFighter">${options}</select></label><table>${rows}</table>`;
+    const input = (m: MoveKey) => (m === 'ender' ? c.combos[0].input : MOVE_INPUTS[m]);
+    const rows = MOVE_ORDER.map((m) => `<tr${m === 'sig1' || m === 'sig2' || m === 'ender' ? ' class="own"' : ''}><td class="in">${input(m)}</td><td>${c.moves[m].name}</td><td class="tag">${moveTag(c.id, m)}</td></tr>`).join('');
+    body.innerHTML = `<label class="pick">Kämpfer <select id="guideFighter">${options}</select></label><p class="intro">${c.icon} <b>${c.name}</b> – ${c.style}</p><table>${rows}</table>`;
     $<HTMLSelectElement>('guideFighter').addEventListener('change', (e) => {
       guideFighter = (e.target as HTMLSelectElement).value;
       renderGuide('moves');

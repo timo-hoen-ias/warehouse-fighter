@@ -10,7 +10,8 @@
     "preview": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json",
-    "test": "vitest run"
+    "test": "vitest run test",
+    "balance": "vitest run scripts --silent=false"
   },
   "dependencies": {
     "three": "^0.186.1"

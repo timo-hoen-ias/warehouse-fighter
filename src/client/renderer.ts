@@ -18,6 +18,21 @@ interface Debris {
   resting: boolean;
 }
 
+interface Ring {
+  mesh: THREE.Mesh;
+  life: number;
+  max: number;
+  grow: number;
+}
+
+interface Dust {
+  mesh: THREE.Mesh;
+  vel: THREE.Vector3;
+  life: number;
+  max: number;
+  size: number;
+}
+
 interface Decal {
   mesh: THREE.Mesh;
   life: number;
@@ -44,6 +59,11 @@ export class GameRenderer {
     block: new THREE.MeshBasicMaterial({ color: 0x80d8ff }),
     peanut: new THREE.MeshStandardMaterial({ color: 0xf5f0e0 }),
   };
+  private rings: Ring[] = [];
+  private ringGeo = new THREE.RingGeometry(0.7, 1, 28);
+  private dust: Dust[] = [];
+  private dustGeo = new THREE.SphereGeometry(0.12, 7, 5);
+  private dustMats = [0.45, 0.32, 0.2].map((o) => new THREE.MeshBasicMaterial({ color: 0xb8ad9a, transparent: true, opacity: o, depthWrite: false }));
   private shake = 0;
   private camX = 0;
   private camDist = 9;
@@ -181,10 +201,14 @@ export class GameRenderer {
     this.clearFinisher();
     for (const d of this.decals) this.scene.remove(d.mesh);
     this.decals = [];
-    for (const m of this.fighters) this.scene.remove(m.root);
+    for (const m of this.fighters) {
+      this.scene.remove(m.root);
+      m.dispose();
+    }
     this.fighters = chars.map((c) => {
       const m = new FighterModel(c);
       this.scene.add(m.root);
+      this.scene.add(m.trail.mesh);
       return m;
     });
   }
@@ -271,6 +295,30 @@ export class GameRenderer {
     }
   }
 
+  /** Schockwellen-Ring beim Treffer (zur Kamera gedreht). */
+  private ring(x: number, y: number, color: number, size: number, life = 0.22) {
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending });
+    const mesh = new THREE.Mesh(this.ringGeo, mat);
+    mesh.position.set(x, y, 0.35);
+    mesh.quaternion.copy(this.camera.quaternion);
+    mesh.scale.setScalar(size * 0.3);
+    this.scene.add(mesh);
+    this.rings.push({ mesh, life, max: life, grow: size });
+  }
+
+  /** Staubwolke am Boden (Landung, Dash, Aufprall). */
+  private puff(x: number, count: number, spread: number, dir = 0) {
+    for (let i = 0; i < count; i++) {
+      const mesh = new THREE.Mesh(this.dustGeo, this.dustMats[i % this.dustMats.length]);
+      mesh.position.set(x + (Math.random() - 0.5) * 0.3, 0.08, (Math.random() - 0.5) * 0.4);
+      const a = Math.random() * Math.PI;
+      const vel = new THREE.Vector3(Math.cos(a) * spread + dir, 0.25 + Math.random() * 0.4, (Math.random() - 0.5) * spread);
+      const max = 0.45 + Math.random() * 0.35;
+      this.dust.push({ mesh, vel, life: max, max, size: 0.6 + Math.random() * 0.8 });
+      this.scene.add(mesh);
+    }
+  }
+
   private isRobot(slot: 0 | 1) {
     return this.fighters[slot]?.def.robot ?? false;
   }
@@ -341,8 +389,31 @@ export class GameRenderer {
         this.bleed(new THREE.Vector3(e.x, e.y, 0.2), e.target, Math.round(e.damage / 4), dir, 2.5);
         this.fighters[e.target]?.hitFlash();
         this.shake = Math.max(this.shake, e.heavy ? 0.25 : 0.1);
+        if (e.heavy) this.ring(e.x, e.y, 0xfff3c4, 1.4);
+        else if (e.combo >= 3) this.ring(e.x, e.y, 0xffd54f, 0.8, 0.15);
       } else if (e.type === 'block') {
         this.burst(e.x, e.y, 8, this.sparkMats.block, 2.5);
+        this.ring(e.x, e.y, 0x80d8ff, 0.7, 0.15);
+      } else if (e.type === 'parry') {
+        this.burst(e.x, e.y, 22, this.sparkMats.block, 4.5);
+        this.ring(e.x, e.y, 0x40c4ff, 2.2, 0.35);
+        this.fighters[e.player]?.hitFlash();
+        this.shake = Math.max(this.shake, 0.2);
+      } else if (e.type === 'armor') {
+        this.burst(e.x, e.y, 14, this.sparkMats.hit, 3);
+        this.ring(e.x, e.y, 0xff9100, 1.6, 0.3);
+        this.shake = Math.max(this.shake, 0.15);
+      } else if (e.type === 'tech') {
+        this.burst(e.x, e.y, 12, this.sparkMats.block, 3);
+        this.ring(e.x, e.y, 0xffffff, 1.2, 0.25);
+      } else if (e.type === 'land') {
+        this.puff(e.x, 6, 0.9);
+      } else if (e.type === 'dash') {
+        const f = state?.fighters[e.player];
+        if (f) this.puff(f.x - f.facing * 0.2, 4, 0.4, -f.facing * 0.8);
+      } else if (e.type === 'knockdown') {
+        this.puff(e.x, 12, 1.6);
+        this.shake = Math.max(this.shake, 0.18);
       } else if (e.type === 'ko') {
         this.startFinisher(e.finisher, e.loser, state);
       } else if (e.type === 'roundStart' && (this.finisher || this.debris.length)) {
@@ -465,6 +536,34 @@ export class GameRenderer {
         }
       }
     }
+
+    // Schockwellen
+    this.rings = this.rings.filter((r) => {
+      r.life -= edt;
+      const k = 1 - Math.max(0, r.life) / r.max;
+      r.mesh.scale.setScalar(r.grow * (0.3 + k * 0.9));
+      (r.mesh.material as THREE.MeshBasicMaterial).opacity = 0.9 * (1 - k);
+      if (r.life <= 0) {
+        this.scene.remove(r.mesh);
+        (r.mesh.material as THREE.Material).dispose();
+        return false;
+      }
+      return true;
+    });
+
+    // Staub
+    this.dust = this.dust.filter((d) => {
+      d.life -= edt;
+      d.vel.multiplyScalar(Math.max(0, 1 - edt * 3));
+      d.mesh.position.addScaledVector(d.vel, edt);
+      const k = 1 - Math.max(0, d.life) / d.max;
+      d.mesh.scale.setScalar(d.size * (0.5 + k * 1.6) * (1 - k * k));
+      if (d.life <= 0) {
+        this.scene.remove(d.mesh);
+        return false;
+      }
+      return true;
+    });
 
     // Blutflecken verblassen langsam
     this.decals = this.decals.filter((d) => {

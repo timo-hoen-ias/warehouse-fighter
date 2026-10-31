@@ -19,20 +19,22 @@ Gerendert mit **three.js**, gehostet auf **Cloudflare** (Worker + Durable Object
 
 ## Kämpfer (10)
 
-| Kämpfer | Typ | Spezial (Projektil) |
-| --- | --- | --- |
-| 🏗️ Gabelstapler-Gerd | schwer, langsam | Europaletten-Wurf |
-| 📟 Kommi-Kim | schnell, fragil | Barcode-Strahl |
-| 📦 Packer Piet | ausgewogen | Karton-Kanone |
-| 📋 Lagerleiterin Lena | ausgewogen, gute Reichweite | KPI-Klemmbrett |
-| 🚚 LKW-Ludger | sehr schwer, sehr langsam | Hupkonzert (Schallwelle) |
-| ☕ Praktikant Paul | sehr schnell, wenig Ausdauer | Kaffeebecher-Wurf |
-| 🏷️ Inventur-Ingrid | schnell, schnelles Projektil | Etiketten-Salve |
-| 🧊 Kühlhaus-Kalle | schwer, rutschige Grätsche | Eisblock |
-| ↩️ Retouren-Rita | ausgewogen | Rücksende-Paket |
-| 🤖 Robo-Picker RX-7 | Roboter, verliert Öl statt Blut | Lidar-Strahl |
+| Kämpfer | Kampfstil | ↓ + Spezial | ← + Spezial | Eigener Kombo-Abschluss |
+| --- | --- | --- | --- | --- |
+| 🏗️ Gabelstapler-Gerd | Koloss | Gabelhub (Befehlswurf) | Hydraulik-Panzer (gepanzert) | Schwer, Schwer → Stapler-Hammer |
+| 📟 Kommi-Kim | Wirbelwind | Regalsprung (Sprung-Überkopf) | Scan-Gewitter (4 Treffer) | Leicht ×3 → Express-Scan |
+| 📦 Packer Piet | Allrounder | Rollband-Karton (tiefes Geschoss) | Klebeband-Lasso (Wurf auf Distanz) | Leicht, Tritt, Schwer → Klebeband-Fessel (zieht heran) |
+| 📋 Lagerleiterin Lena | Strategin | Beförderungsstopp (unverwundbarer Uppercut) | Zeigestock (größte Reichweite) | → Leicht, Schwer, Tritt → Fristlose Kündigung |
+| 🚚 LKW-Ludger | Schwergewicht | Druckluftbremse (Bodenwelle) | Vierzigtonner (Panzerung ×2) | Schwer, Tritt, Schwer → Sattelzug-Kombi |
+| ☕ Praktikant Paul | Flitzer | Kaffeepfützen-Rutscher | Espresso-Hektik (5 Treffer) | Leicht, Leicht, Tritt, Tritt → Koffein-Kick |
+| 🏷️ Inventur-Ingrid | Kontrolle | Doppelt gezählt (Konterhaltung) | Etiketten-Teppich (tiefes Geschoss) | ↓ Leicht ×2, Schwer → Nachzähl-Hieb (Überkopf) |
+| 🧊 Kühlhaus-Kalle | Eisblock | Eisglätte-Grätsche | Kühlschrank-Stampfer (gepanzert) | Schwer, Schwer → Gefrierschock (Launcher) |
+| ↩️ Retouren-Rita | Konterspielerin | Schraubenschlüssel-Wirbel (3 Treffer) | Rücksende-Uppercut (unverwundbar) | Leicht, Tritt, Tritt, Schwer → Retourenschein-Dreher |
+| 🤖 Robo-Picker RX-7 | Maschine | Magnetgreifer (Wurf auf Distanz) | Overclock-Uppercut (unverwundbar) | Tritt ×3 → Turbo-Bohrer (4 Treffer) |
 
-Jeder hat einen leichten, schweren, tiefen (↓ + schwer) und Sprungangriff – Namen und Werte in `src/shared/characters.ts`.
+Dazu hat jeder das Grundset (Leicht, Schwer, Tritt, Richtungs-Moves, Sprung, Geschoss, Ansturm, Wurf) mit eigenen Namen und Werten –
+alles in `src/shared/characters.ts`. Jeder Kämpfer hat ein eigenes Modell (Statur, Frisur, Bart, Brille, Ausrüstung) und
+eine eigene Kampfhaltung, siehe `src/client/looks.ts`.
 
 ## Arenen (10)
 
@@ -53,7 +55,7 @@ Gefahrgutlager (rotierende Warnleuchten) · Black Friday Peak Season (Paketberg,
 
 ## Kampfsystem (Tekken-Stil)
 
-Jeder Kämpfer hat **18 Moves** mit eigenen Namen. Die **Kampfschule** (Hauptmenü und Pausenmenü) erklärt Grundlagen,
+Jeder Kämpfer hat **21 Moves** mit eigenen Namen, davon drei nur für ihn. Die **Kampfschule** (Hauptmenü und Pausenmenü) erklärt Grundlagen,
 Kombos mit Schwierigkeitsgrad, die komplette Befehlsliste jedes Kämpfers und die Steuerung.
 
 - **Kombos:** Angriffe lassen sich bei Treffer in den nächsten Angriff abbrechen, z. B. *Leicht, Leicht, Schwer*,
@@ -63,17 +65,37 @@ Kombos mit Schwierigkeitsgrad, die komplette Befehlsliste jedes Kämpfers und di
 - **Würfe (Leicht + Tritt nah am Gegner)** gehen durch den Block, **Feger (↓ + Schwer)** und **Überkopf (→ + Schwer)**
   werfen zu Boden. Am Boden liegt man kurz unverwundbar und steht dann auf.
 - **Dash:** zweimal vor tippen, **Rückwärts-Dash:** zweimal zurück.
-- Die CPU nutzt Kombos, Launcher, Würfe und Dashs, blockt tief und hoch.
+- Die CPU nutzt Kombos (auch die eigenen des Kämpfers), Signatur-Moves, Launcher, Würfe und Dashs, blockt tief und hoch,
+  fängt Sprünge mit dem Uppercut ab und wirft gegen Panzerung.
+
+### Kein Stunlock
+
+Niemand soll mit einer einzigen Attacke gewinnen, die man nur oft genug drückt:
+
+- **Hitstun-Decay:** Wer ohne Pause getroffen wird, kommt mit jedem Treffer schneller frei – auch bei „Frame-Traps“
+  zwischen zwei Ketten. Erst nach ~0,7 s Verschnaufpause verfällt die Ermüdung.
+- **Wiederholungs-Strafe:** Derselbe Move mehrmals hintereinander macht weniger Stun und Schaden und stößt weiter weg.
+- **Pushback:** Steht der Gegner an der Wand, wird stattdessen der Angreifer zurückgeschoben.
+- **Kombo-Limit:** Nach 8 Treffern am Stück fliegt man zu Boden und ist bis zur Landung nicht mehr treffbar.
+- **Aufsteh-Schutz:** Nach dem Aufstehen ist man noch kurz unverwundbar (endet, sobald man selbst angreift).
+- **Würfe** greifen nicht im Block- oder Trefferstun, gleichzeitige Würfe lösen sich. Ein Launcher wirkt nur einmal pro Kombo,
+  Ketten sind auf fünf Moves begrenzt.
+- Tests in `test/balance.test.ts` prüfen das für jeden Kämpfer und jede Dauerfeuer-Taste. `npm run balance` lässt alle
+  Paarungen CPU gegen CPU antreten und zeigt die Siegquoten (aktuell 42–59 %).
 
 ## Grafik und Sound
 
 - **Animationen** über federnde Gelenke: Ausholen, Durchziehen, Gewichtsverlagerung, Treffer- und Sturzreaktionen.
+  Haltung und Tempo je Kampfstil (Boxer wippt, Schwergewicht schwingt nach, Roboter schnappt zackig),
+  leuchtende Schlagspuren in Kämpferfarbe, **Hitstop** (kurzes Einfrieren beim Treffer), Schockwellen, Staub bei Landung,
+  Dash und Sturz.
 - **Live-Schatten:** Die Sonne folgt dem Kampf mit einem engen, scharfen Schattenbereich, dazu schwenkt ein Hallenstrahler
   über die Kampffläche.
 - **Retro-Pixelfilter** (aus / leicht / mittel / stark, in den Optionen): niedrigere Auflösung, reduzierte
   Farben, Dithering und Scanlines.
 - **Sound** komplett synthetisiert: geschichtete Treffer je nach Gewicht, Hallenhall, Klonk beim Blocken, Aufprall beim
-  Knockdown, eigener Klang je Geschoss, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
+  Knockdown, eigener Klang je Geschoss, **Kampfschreie und Schmerzlaute mit eigener Stimme je Kämpfer** (Formant-Synthese,
+  der Roboter piept), Signatur-Klänge (Stapler-Warnpiepen, Lkw-Hupe, Scanner …), Konter- und Panzer-Klänge, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
 - **90er-Arcade-Musik:** ein Menütitel und fünf Kampftitel („Schichtbeginn“, „Gabelstapler-Turbo“, „Kühlhaus-Techno“,
   „Nachtschicht“, „Endgegner“). Automatisch passend zur Arena, im Arcade-Finale läuft der Endgegner-Titel – oder fest
   gewählt in den Optionen.

@@ -1,4 +1,4 @@
-import { type MoveDef, type MoveKey, getCharacter } from '../shared/characters';
+import { type ChainButton, type MoveDef, type MoveKey, getCharacter } from '../shared/characters';
 import { type GameState, INPUT } from '../shared/game';
 
 // CPU-Gegner: arbeitet kleine Pläne ab (Kombo-Ketten, Launcher mit Juggle,
@@ -7,6 +7,7 @@ import { type GameState, INPUT } from '../shared/game';
 // lange Kombos statt Einzelschläge kommen.
 
 const BUTTONS = INPUT.LIGHT | INPUT.HEAVY | INPUT.SPECIAL | INPUT.KICK;
+const moveLengthOf = (m: MoveDef) => m.startup + m.active + m.recovery;
 
 interface PlanStep {
   bits: number;
@@ -29,7 +30,8 @@ export class CpuController {
       this.current = null;
       return 0;
     }
-    const moves = getCharacter(me.char).moves;
+    const def = getCharacter(me.char);
+    const moves = def.moves;
     const toward = op.x > me.x ? INPUT.RIGHT : INPUT.LEFT;
     const away = toward === INPUT.RIGHT ? INPUT.LEFT : INPUT.RIGHT;
     const dist = Math.abs(op.x - me.x);
@@ -50,6 +52,18 @@ export class CpuController {
       if (op.vy < 0 && op.y < 1.7) this.queue(this.chain(['light', 'light2', 'finisher'], moves, [INPUT.LIGHT, INPUT.LIGHT, INPUT.HEAVY]));
     }
 
+    // Anti-Air: springt der Gegner heran, mit dem unverwundbaren Uppercut abfangen
+    const antiAir = (['sig1', 'sig2'] as const).find((k) => moves[k].invuln);
+    if (antiAir && free && !this.current && op.status === 'attack' && op.y > 0.3 && op.vy < 0.05 && dist < 1.9 && Math.random() < 0.15 + this.level * 0.6) {
+      return this.start([{ bits: this.sigBits(antiAir, away), ticks: 40 }]);
+    }
+
+    // Gepanzerter Angriff läuft an: werfen (bricht Panzerung) oder blocken
+    if (free && !this.current && op.status === 'attack' && op.armorLeft > 0 && Math.random() < 0.1 + this.level * 0.5) {
+      if (dist < 1.1 && Math.random() < 0.5) return this.start([{ bits: INPUT.LIGHT | INPUT.KICK, ticks: 34 }]);
+      return this.start([{ bits: away, ticks: 20 }]);
+    }
+
     // Bedrohung erkennen: Angriff in Reichweite oder Projektil auf mich zu
     const opMove = op.move ? getCharacter(op.char).moves[op.move] : null;
     const incoming =
@@ -57,6 +71,11 @@ export class CpuController {
       s.projectiles.some((p) => p.owner !== this.slot && Math.sign(me.x - p.x) === Math.sign(p.vx) && Math.abs(me.x - p.x) < 3.5);
     if (incoming && free && !this.current && this.reaction <= 0 && Math.random() < this.level * 0.55) {
       const projectile = s.projectiles.some((p) => p.owner !== this.slot);
+      // Konterhaltung gegen mittlere/hohe Angriffe
+      const parry = (['sig1', 'sig2'] as const).find((k) => moves[k].parry);
+      if (parry && !projectile && opMove && opMove.height !== 'low' && op.statusTime < opMove.startup - 2 && Math.random() < 0.25 + this.level * 0.3) {
+        return this.start([{ bits: this.sigBits(parry, away), ticks: 30 }]);
+      }
       if (projectile && Math.random() < 0.3 + this.level * 0.25) return this.start([{ bits: INPUT.UP | toward, ticks: 30 }]);
       if (!projectile && Math.random() < 0.15 * this.level) return this.start(this.backdash(away));
       return this.start([{ bits: away | (this.isLow(op.move, moves) ? INPUT.DOWN : 0), ticks: 12 }]);
@@ -86,6 +105,10 @@ export class CpuController {
       if (r < 0.12) return this.start([{ bits: toward | INPUT.SPECIAL, ticks: 40 }]); // Ansturm
       return this.start([{ bits: toward, ticks: 10 }]);
     }
+    // Signatur-Moves aus passender Distanz
+    const sig = this.pickSignature(dist, moves);
+    if (sig && Math.random() < 0.08 + this.level * 0.06) return this.start([{ bits: this.sigBits(sig, away), ticks: moveLengthOf(moves[sig]) + 4 }]);
+
     if (dist > reach + 0.2) {
       if (r < 0.03) return this.start([{ bits: INPUT.SPECIAL, ticks: 25 }]);
       if (r < 0.06) return this.start([{ bits: INPUT.UP | toward, ticks: 22 }, { bits: INPUT.KICK, ticks: 20 }]);
@@ -105,6 +128,12 @@ export class CpuController {
         [['fwdLight', 'finisher'], [toward | INPUT.LIGHT, INPUT.HEAVY]],
         [['lowLight', 'lowLight', 'lowKick'], [INPUT.DOWN | INPUT.LIGHT, INPUT.DOWN | INPUT.LIGHT, INPUT.DOWN | INPUT.KICK]],
       ];
+      // Eigene Kombos des Kämpfers bevorzugen
+      for (const c of def.combos) {
+        if (c.moves.length < 2) continue;
+        const bits = this.routeBits(c.moves, def.chains, toward);
+        if (bits) strings.push([c.moves, bits], [c.moves, bits]);
+      }
       const [keys, bits] = strings[Math.floor(Math.random() * strings.length)];
       return this.start(this.chain(keys, moves, bits));
     }
@@ -120,7 +149,44 @@ export class CpuController {
   }
 
   private isLow(move: MoveKey | null, _moves: Record<MoveKey, MoveDef>) {
-    return move === 'low' || move === 'lowLight' || move === 'lowKick';
+    return move === 'low' || move === 'lowLight' || move === 'lowKick' || (!!move && _moves[move]?.height === 'low');
+  }
+
+  private sigBits(k: 'sig1' | 'sig2', away: number) {
+    return k === 'sig1' ? INPUT.DOWN | INPUT.SPECIAL : away | INPUT.SPECIAL;
+  }
+
+  /** Welcher Signatur-Move passt zur Distanz? */
+  private pickSignature(dist: number, moves: Record<MoveKey, MoveDef>): 'sig1' | 'sig2' | null {
+    const fits = (['sig1', 'sig2'] as const).filter((k) => {
+      const m = moves[k];
+      if (m.parry || m.invuln) return false; // nur als Reaktion
+      if (m.projectile) return dist > 2.5;
+      const reach = m.hitbox.x + m.hitbox.w + (m.lunge ?? 0) * (m.startup + m.active) + 0.3;
+      return dist < reach && dist > reach * 0.35;
+    });
+    return fits.length ? fits[Math.floor(Math.random() * fits.length)] : null;
+  }
+
+  /** Tasten für eine Kombo-Route aus der Kettentabelle des Kämpfers. */
+  private routeBits(route: MoveKey[], chains: Partial<Record<MoveKey, Partial<Record<ChainButton, MoveKey>>>>, toward: number): number[] | null {
+    const start: Partial<Record<MoveKey, number>> = {
+      light: INPUT.LIGHT,
+      heavy: INPUT.HEAVY,
+      kick: INPUT.KICK,
+      lowLight: INPUT.DOWN | INPUT.LIGHT,
+      fwdLight: toward | INPUT.LIGHT,
+    };
+    const btn: Record<ChainButton, number> = { light: INPUT.LIGHT, heavy: INPUT.HEAVY, kick: INPUT.KICK };
+    const first = start[route[0]];
+    if (!first) return null;
+    const bits = [first];
+    for (let i = 1; i < route.length; i++) {
+      const entry = Object.entries(chains[route[i - 1]] ?? {}).find(([, k]) => k === route[i]);
+      if (!entry) return null;
+      bits.push(btn[entry[0] as ChainButton]);
+    }
+    return bits;
   }
 
   /** Kettenschritte: nächste Taste kurz nach dem aktiven Teil drücken (Input-Puffer fängt Ungenauigkeit ab). */

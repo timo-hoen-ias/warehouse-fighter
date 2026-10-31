@@ -1,7 +1,7 @@
 // Spiel-Simulation. Läuft identisch im Browser (Lokal / CPU) und im
 // Durable Object (Online, serverautoritativ). Keine DOM- oder three.js-Abhängigkeiten.
 
-import { type Box, CHAINS, type ChainButton, type MoveKey, type ProjectileKind, getCharacter, moveLength } from './characters';
+import { type Box, type ChainButton, type MoveDef, type MoveKey, type ProjectileKind, getCharacter, moveLength } from './characters';
 
 export const TICK_RATE = 60;
 export const ARENA_HALF_WIDTH = 7;
@@ -23,6 +23,26 @@ const DASH_TICKS = 14;
 const BACKDASH_TICKS = 18;
 const DOWN_TICKS = 44;
 const GETUP_TICKS = 20;
+
+// --- Anti-Stunlock --------------------------------------------------------
+/** Nach dem Aufstehen noch so lange unverwundbar (endet sofort, wenn man selbst angreift). */
+export const WAKEUP_INVULN = 16;
+/** So lange muss man frei sein, bis die „Stun-Ermüdung“ (heat) verfällt. */
+export const HEAT_RESET_TICKS = 40;
+/** Ab so vielen Treffern ohne Pause wird man zwangsweise umgeworfen (danach Aufsteh-Schutz). */
+export const COMBO_LIMIT = 8;
+/** Hitstun schrumpft mit jedem Treffer ohne Pause … */
+const STUN_DECAY_PER_HIT = 0.06;
+/** … und noch stärker, wenn derselbe Move wiederholt trifft. */
+const STUN_DECAY_PER_REPEAT = 0.2;
+const MIN_STUN_SCALE = 0.4;
+/** Maximal so viele Moves in einer Kette, jeder Move höchstens zweimal. */
+const MAX_CHAIN = 5;
+/** Kurzes Einfrieren beim Treffer (Hitstop) – gibt Wucht, ändert keine Frame-Vorteile. */
+const HITSTOP_LIGHT = 4;
+const HITSTOP_HEAVY = 7;
+const HITSTOP_BLOCK = 3;
+const HITSTOP_MULTI = 2;
 
 export const INPUT = {
   LEFT: 1,
@@ -85,6 +105,23 @@ export interface Fighter {
   lastHit: 'high' | 'mid' | 'low';
   /** Abklingzeit des Fernangriffs in Ticks – verhindert Dauerfeuer. */
   projCooldown: number;
+  /** Treffer des aktuellen Moves (Mehrfachtreffer) und Tick des letzten Treffers. */
+  hitCount: number;
+  hitTick: number;
+  /** Verbleibende Panzerung des aktuellen Moves. */
+  armorLeft: number;
+  /** Moves der laufenden Kette (begrenzt Länge und Wiederholungen). */
+  chain: MoveKey[];
+  /** Stun-Ermüdung: Treffer seit der letzten echten Verschnaufpause. */
+  heat: number;
+  /** Ticks am Stück handlungsfähig – setzt heat zurück. */
+  freeTime: number;
+  /** Zuletzt erlittene Moves (für die Wiederholungs-Strafe). */
+  stale: MoveKey[];
+  /** Aufsteh-Unverwundbarkeit in Ticks. */
+  invuln: number;
+  /** Rückstoß für den Angreifer, wenn der Gegner an der Wand klebt. */
+  recoil: number;
 }
 
 export interface Projectile {
@@ -110,7 +147,17 @@ export type GameEvent =
   | { type: 'timeout' }
   | { type: 'roundStart'; round: number }
   | { type: 'fight' }
-  | { type: 'matchEnd'; winner: 0 | 1 | -1 };
+  | { type: 'matchEnd'; winner: 0 | 1 | -1 }
+  /** Konterhaltung hat einen Angriff abgefangen. */
+  | { type: 'parry'; player: 0 | 1; x: number; y: number }
+  /** Panzerung hat einen Treffer weggesteckt. */
+  | { type: 'armor'; player: 0 | 1; x: number; y: number }
+  /** Beide werfen gleichzeitig – Wurf gelöst. */
+  | { type: 'tech'; x: number; y: number }
+  /** Kombo-Limit erreicht: Zwangs-Knockdown. */
+  | { type: 'limit'; target: 0 | 1 }
+  /** Landung nach Sprung (Staub, Geräusch). */
+  | { type: 'land'; player: 0 | 1; x: number };
 
 /** Finaler Schlag: Kopf fliegt, Arm fliegt oder Gegner kracht gegen die Hallenwand. */
 export type FinisherKind = 'head' | 'arm' | 'wall';
@@ -142,6 +189,8 @@ export interface GameState {
   /** Restliche Zeitlupen-Ticks nach dem KO (0 = normal). */
   slowmo: number;
   finisher: { kind: FinisherKind; loser: 0 | 1 } | null;
+  /** Hitstop: so viele Ticks bleibt alles kurz stehen. */
+  hitstop: number;
 }
 
 function createFighter(char: string, slot: 0 | 1): Fighter {
@@ -171,6 +220,15 @@ function createFighter(char: string, slot: 0 | 1): Fighter {
     launched: false,
     lastHit: 'mid',
     projCooldown: 0,
+    hitCount: 0,
+    hitTick: 0,
+    armorLeft: 0,
+    chain: [],
+    heat: 0,
+    freeTime: 0,
+    stale: [],
+    invuln: 0,
+    recoil: 0,
   };
 }
 
@@ -187,6 +245,7 @@ export function createGame(charA: string, charB: string, stage = 'wareneingang')
     events: [{ type: 'roundStart', round: 1 }],
     slowmo: 0,
     finisher: null,
+    hitstop: 0,
     roundWinner: null,
     matchWinner: null,
   };
@@ -205,20 +264,29 @@ function resetRound(s: GameState) {
   s.phaseTime = 0;
   s.roundWinner = null;
   s.slowmo = 0;
+  s.hitstop = 0;
   s.finisher = null;
   s.events.push({ type: 'roundStart', round: s.round });
+}
+
+function currentMove(f: Fighter): MoveDef | null {
+  return f.status === 'attack' && f.move ? getCharacter(f.char).moves[f.move] : null;
 }
 
 export function hurtbox(f: Fighter): Box {
   // Hochgeschleudert liegt man quer in der Luft – niedrigere, flache Hurtbox
   if (f.launched && f.y > 0) return { x: f.x - 0.55, y: f.y - 0.3, w: 1.1, h: 1.2 };
-  const h = f.status === 'down' ? 0.4 : f.crouching ? CROUCH_HEIGHT : f.status === 'jump' ? 1.4 : STAND_HEIGHT;
+  const sliding = currentMove(f)?.slide === true;
+  const h = f.status === 'down' ? 0.4 : sliding ? 0.6 : f.crouching ? CROUCH_HEIGHT : f.status === 'jump' ? 1.4 : STAND_HEIGHT;
   return { x: f.x - BODY_WIDTH / 2, y: f.y, w: BODY_WIDTH, h };
 }
 
-/** Am Boden liegend und beim Aufstehen ist man unverwundbar. */
+/** Am Boden liegend, beim Aufstehen, kurz danach und in Unverwundbarkeits-Frames ist man nicht zu treffen. */
 export function hittable(f: Fighter) {
-  return f.status !== 'down' && f.status !== 'getup' && f.status !== 'ko';
+  if (f.status === 'down' || f.status === 'getup' || f.status === 'ko' || f.invuln > 0) return false;
+  const m = currentMove(f);
+  if (m?.invuln && f.statusTime >= m.invuln[0] && f.statusTime <= m.invuln[1]) return false;
+  return true;
 }
 
 /** Aktive Angriffs-Hitbox in Weltkoordinaten oder null. */
@@ -262,8 +330,17 @@ function startAttack(s: GameState, f: Fighter, slot: 0 | 1, key: MoveKey) {
   f.moveHit = false;
   f.buffer = 0;
   f.bufferTime = 0;
+  f.hitCount = 0;
+  f.hitTick = 0;
+  f.armorLeft = m.armor ?? 0;
+  // Wer selbst angreift, verliert den Aufsteh-Schutz
+  f.invuln = 0;
   // Aus dem Dash heraus behält man etwas Schwung
   if (key !== 'air' && key !== 'airKick') f.vx = fromDash ? f.vx * 0.5 : 0;
+  if (m.hop) {
+    f.vy = m.hop;
+    f.y = Math.max(f.y, 0.01);
+  }
   f.crouching = m.crouch === true;
   s.events.push({ type: 'swing', player: slot, move: key });
 }
@@ -276,6 +353,9 @@ function chooseGroundMove(s: GameState, f: Fighter, slot: 0 | 1, buf: number, in
   if (buf & INPUT.LIGHT && buf & INPUT.KICK) return 'throw';
   if (buf & INPUT.SPECIAL) {
     if (fwd) return 'rush';
+    const def = getCharacter(f.char).moves;
+    const sig = down ? 'sig1' : back ? 'sig2' : null;
+    if (sig) return def[sig].projectile && (f.projCooldown > 0 || s.projectiles.some((p) => p.owner === slot)) ? null : sig;
     // nur ein Geschoss gleichzeitig, danach Abklingzeit
     return f.projCooldown > 0 || s.projectiles.some((p) => p.owner === slot) ? null : 'special';
   }
@@ -286,14 +366,18 @@ function chooseGroundMove(s: GameState, f: Fighter, slot: 0 | 1, buf: number, in
 }
 
 function chainFromBuffer(f: Fighter): MoveKey | null {
-  const routes = f.move ? CHAINS[f.move] : undefined;
-  if (!routes) return null;
+  const routes = f.move ? getCharacter(f.char).chains[f.move] : undefined;
+  if (!routes || f.chain.length >= MAX_CHAIN) return null;
   const order: [ChainButton, number][] = [
     ['heavy', INPUT.HEAVY],
     ['kick', INPUT.KICK],
     ['light', INPUT.LIGHT],
   ];
-  for (const [btn, bit] of order) if (f.buffer & bit && routes[btn]) return routes[btn]!;
+  for (const [btn, bit] of order) {
+    const next = routes[btn];
+    // Endlos-Schleifen (z. B. ↓ Leicht, ↓ Leicht, …) abschneiden
+    if (f.buffer & bit && next && f.chain.filter((k) => k === next).length < 2) return next;
+  }
   return null;
 }
 
@@ -303,17 +387,16 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
   const def = getCharacter(f.char);
   const fighting = s.phase === 'fight';
   if (!fighting) input = 0;
-  const pressed = input & ~f.prevInput;
-  f.prevInput = input;
+  const pressed = bufferInput(f, input, true);
   f.statusTime += 1;
   if (f.projCooldown > 0) f.projCooldown -= 1;
-
-  // Eingabepuffer
-  if (pressed & ATTACK_BUTTONS) {
-    f.buffer |= pressed & ATTACK_BUTTONS;
-    f.bufferTime = BUFFER_TICKS;
-  } else if (f.bufferTime > 0 && --f.bufferTime === 0) {
-    f.buffer = 0;
+  if (f.invuln > 0) f.invuln -= 1;
+  // Stun-Ermüdung verfällt erst nach einer echten Verschnaufpause
+  const stunned = f.status === 'hitstun' || f.status === 'blockstun' || f.status === 'down' || f.status === 'getup';
+  f.freeTime = stunned ? 0 : f.freeTime + 1;
+  if (f.freeTime >= HEAT_RESET_TICKS) {
+    f.heat = 0;
+    f.stale = [];
   }
 
   const lockedFacing = f.status === 'attack' || f.status === 'hitstun' || f.status === 'ko' || f.status === 'down' || f.status === 'backdash';
@@ -348,6 +431,9 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
         f.status = 'idle';
         f.statusTime = 0;
         f.combo = 0;
+        f.heat = 0;
+        f.stale = [];
+        f.invuln = WAKEUP_INVULN;
       }
       break;
     case 'backdash':
@@ -364,7 +450,9 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
       break;
     case 'attack': {
       const m = def.moves[f.move!];
-      if (m.lunge && f.statusTime < m.startup + m.active) f.vx = m.lunge * f.facing;
+      // Folge-Moves einer Kette rücken leicht nach, damit die Kette trotz Rückstoß zusammenhält
+      const lunge = m.lunge ?? (f.chain.length > 1 ? 0.045 : 0);
+      if (lunge && f.statusTime < m.startup + m.active) f.vx = lunge * f.facing;
       else if (grounded(f)) f.vx *= 0.7;
       // Leicht + Tritt fast gleichzeitig = Wurf
       if (f.statusTime <= 3 && ((f.move === 'light' && pressed & INPUT.KICK) || (f.move === 'kick' && pressed & INPUT.LIGHT))) {
@@ -391,6 +479,7 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
       if (f.moveHit && f.statusTime >= m.startup + m.active) {
         const next = chainFromBuffer(f);
         if (next) {
+          f.chain.push(next);
           startAttack(s, f, slot, next);
           break;
         }
@@ -425,6 +514,7 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
       const move = f.buffer ? chooseGroundMove(s, f, slot, f.buffer, input) : null;
       const horizontal = pressed & (INPUT.LEFT | INPUT.RIGHT);
       if (move) {
+        f.chain = [move];
         startAttack(s, f, slot, move);
       } else if (input & INPUT.UP) {
         f.status = 'jump';
@@ -462,7 +552,9 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
   }
 
   // Physik
-  f.x += f.vx;
+  f.x += f.vx + f.recoil;
+  f.recoil *= 0.75;
+  if (Math.abs(f.recoil) < 0.002) f.recoil = 0;
   if (!grounded(f) || f.vy > 0) {
     f.vy -= GRAVITY;
     f.y += f.vy;
@@ -479,10 +571,26 @@ function updateFighter(s: GameState, slot: 0 | 1, input: number) {
         f.status = 'idle';
         f.statusTime = 0;
         f.vx = 0;
+        s.events.push({ type: 'land', player: slot, x: f.x });
+      } else if (f.status === 'attack') {
+        s.events.push({ type: 'land', player: slot, x: f.x });
       }
       f.launched = false;
     }
   }
+}
+
+/** Tastendrücke puffern – läuft auch während des Hitstops weiter, damit keine Eingabe verloren geht. */
+function bufferInput(f: Fighter, input: number, countDown: boolean): number {
+  const pressed = input & ~f.prevInput;
+  f.prevInput = input;
+  if (pressed & ATTACK_BUTTONS) {
+    f.buffer |= pressed & ATTACK_BUTTONS;
+    f.bufferTime = BUFFER_TICKS;
+  } else if (countDown && f.bufferTime > 0 && --f.bufferTime === 0) {
+    f.buffer = 0;
+  }
+  return pressed;
 }
 
 function walkOrStand(f: Fighter, input: number, walkSpeed: number) {
@@ -531,36 +639,108 @@ function applyHit(
   defInput: number,
   hx: number,
   hy: number,
+  firstHit = true,
+  fromProjectile = false,
 ) {
   const d = s.fighters[target];
-  const atk = s.fighters[target === 0 ? 1 : 0];
+  const atkSlot = (target === 0 ? 1 : 0) as 0 | 1;
+  const atk = s.fighters[atkSlot];
   const m = getCharacter(attackerChar).moves[moveKey];
   const dir = d.x >= attackerX ? 1 : -1;
   const airborne = !grounded(d) || d.launched;
-  if (m.grab && airborne) return; // Würfe greifen ins Leere
+  const dm = currentMove(d);
+
+  if (m.grab) {
+    // Würfe greifen nicht in der Luft und nicht, solange der Gegner im Treffer-/Blockstun steckt (keine Wurf-Schleifen)
+    if (airborne || d.status === 'hitstun' || d.status === 'blockstun') return false;
+    // Beide werfen gleichzeitig: Wurf gelöst, beide springen auseinander
+    if (dm?.grab && d.statusTime <= dm.startup + 2) {
+      d.status = 'blockstun';
+      d.statusTime = 0;
+      d.stun = 14;
+      d.move = null;
+      d.vx = dir * 0.1;
+      atk.recoil = -dir * 0.1;
+      s.hitstop = HITSTOP_BLOCK;
+      s.events.push({ type: 'tech', x: hx, y: hy });
+      return true;
+    }
+  }
+
+  // Konterhaltung: mittlere und hohe Angriffe werden abgefangen, Angreifer taumelt
+  if (dm?.parry && !m.grab && m.height !== 'low' && d.statusTime >= dm.startup && d.statusTime < dm.startup + dm.active) {
+    d.status = 'idle';
+    d.statusTime = 0;
+    d.move = null;
+    if (!fromProjectile) {
+      setStun(atk, 'hitstun', 30);
+      atk.lastHit = 'mid';
+      atk.vx = -dir * 0.04;
+    }
+    s.hitstop = HITSTOP_HEAVY;
+    s.events.push({ type: 'parry', player: target, x: hx, y: hy });
+    return true;
+  }
+
   if (!m.grab && blocks(d, defInput, m.height, attackerX)) {
     d.hp = Math.max(1, d.hp - Math.round(m.damage * 0.1));
     setStun(d, 'blockstun', m.blockstun);
     d.vx = dir * m.knockback * 0.7;
+    // Wer blockt, hat sich erfolgreich gewehrt: Stun-Ermüdung zurücksetzen
+    d.heat = 0;
+    d.stale = [];
+    pushFromWall(d, atk, dir, m.knockback * 0.7, fromProjectile);
+    s.hitstop = Math.max(s.hitstop, m.hits && m.hits > 1 ? HITSTOP_MULTI : HITSTOP_BLOCK);
     s.events.push({ type: 'block', x: hx, y: hy, target });
-    return;
+    return true;
   }
-  const scale = Math.max(0.35, 1 - d.combo * 0.1);
-  const dmg = Math.round(m.damage * scale);
+
+  // Panzerung: Treffer wird im Anlauf weggesteckt – voller Schaden, aber kein Stun
+  if (dm && d.armorLeft > 0 && !m.grab && d.statusTime < dm.startup) {
+    d.armorLeft -= 1;
+    d.hp = Math.max(1, d.hp - m.damage);
+    s.hitstop = HITSTOP_HEAVY;
+    s.events.push({ type: 'armor', player: target, x: hx, y: hy });
+    return true;
+  }
+
+  // Wiederholt derselbe Move? Dann weniger Stun und weniger Schaden.
+  const repeats = firstHit ? d.stale.filter((k) => k === moveKey).length : 0;
+  if (firstHit) {
+    d.stale.push(moveKey);
+    if (d.stale.length > 6) d.stale.shift();
+  }
+  const scale = Math.max(0.3, 1 - d.combo * 0.1) * Math.max(0.5, 1 - repeats * 0.15);
+  const dmg = Math.max(1, Math.round(m.damage * scale));
   d.hp = Math.max(0, d.hp - dmg);
   d.combo += 1;
-  setStun(d, 'hitstun', m.hitstun);
+  d.heat += 1;
+  // Hitstun-Decay: je länger man ohne Pause getroffen wird, desto schneller kommt man frei
+  const stunScale = Math.max(MIN_STUN_SCALE, 1 - (d.heat - 1) * STUN_DECAY_PER_HIT - repeats * STUN_DECAY_PER_REPEAT);
+  setStun(d, 'hitstun', Math.max(6, Math.round(m.hitstun * stunScale)));
   d.lastHit = m.height === 'low' ? 'low' : hy - d.y > 1.25 ? 'high' : 'mid';
-  d.vx = dir * m.knockback;
+  // Pushback wächst mit der Ermüdung – Dauerschläge treiben den Gegner aus der Reichweite
+  const push = m.knockback * Math.min(1.8, 1 + Math.max(0, d.heat - 3) * 0.1 + repeats * 0.25);
+  d.vx = dir * push;
+  pushFromWall(d, atk, dir, push, fromProjectile);
+  // Kombo-Limit: zu viele Treffer am Stück -> Zwangs-Knockdown, danach Aufsteh-Schutz
+  const limit = d.heat >= COMBO_LIMIT;
   // Juggle-Schwerkraft: je länger die Kombo, desto weniger Höhe
-  const juggleScale = Math.max(0.5, 1 - (d.combo - 1) * 0.09);
-  if (m.launch) {
+  const juggleScale = Math.max(0.3, 1 - (Math.max(d.combo, d.heat) - 1) * 0.1);
+  // Nur ein Launcher pro Kombo: in der Luft schleudert er nicht erneut hoch
+  if (m.launch && !limit && !airborne) {
     d.vy = m.launch * juggleScale;
     d.launched = true;
-  } else if (m.knockdown) {
+  } else if (m.knockdown || limit) {
     d.vy = Math.max(d.vy, m.grab ? 0.19 : 0.1);
     if (m.grab) d.vx = dir * 0.07;
+    if (limit) d.vx = dir * Math.max(0.1, Math.abs(d.vx));
     d.launched = true;
+    if (limit) {
+      // bis zur Landung nicht mehr treffbar – danach greift der Aufsteh-Schutz
+      d.invuln = 45;
+      s.events.push({ type: 'limit', target });
+    }
   } else if (airborne) {
     // Juggle: kurz anheben, kaum wegstoßen, damit die Kombo weitergehen kann
     d.vy = Math.max(0.12 * juggleScale, d.vy * 0.3 + 0.05);
@@ -569,7 +749,16 @@ function applyHit(
   }
   if (d.launched) d.y = Math.max(d.y, 0.01);
   atk.combo = 0;
-  s.events.push({ type: 'hit', x: hx, y: hy, target, damage: dmg, heavy: m.damage >= 80 || !!m.knockdown || !!m.launch, move: moveKey, combo: d.combo });
+  const heavy = m.damage >= 80 || !!m.knockdown || !!m.launch || !!m.grab;
+  s.hitstop = Math.max(s.hitstop, m.hits && m.hits > 1 ? HITSTOP_MULTI : heavy ? HITSTOP_HEAVY : HITSTOP_LIGHT);
+  s.events.push({ type: 'hit', x: hx, y: hy, target, damage: dmg, heavy, move: moveKey, combo: d.combo });
+  return true;
+}
+
+/** Klebt der Getroffene an der Hallenwand, wird stattdessen der Angreifer zurückgeschoben. */
+function pushFromWall(d: Fighter, atk: Fighter, dir: number, push: number, fromProjectile: boolean) {
+  if (fromProjectile) return;
+  if (Math.abs(d.x) >= ARENA_HALF_WIDTH - 0.35 && Math.sign(d.x) === dir) atk.recoil = -dir * Math.abs(push) * 0.9;
 }
 
 function resolveCombat(s: GameState, inputs: [number, number]) {
@@ -578,13 +767,22 @@ function resolveCombat(s: GameState, inputs: [number, number]) {
     const a = s.fighters[slot];
     const t = (slot === 0 ? 1 : 0) as 0 | 1;
     const box = attackBox(a);
-    if (!box || a.moveHit || !hittable(s.fighters[t])) continue;
+    if (!box || !hittable(s.fighters[t])) continue;
+    const m = getCharacter(a.char).moves[a.move!];
+    const maxHits = m.hits ?? 1;
+    const interval = Math.max(2, Math.floor(m.active / maxHits));
+    if (a.hitCount >= maxHits || (a.hitCount > 0 && a.statusTime - a.hitTick < interval)) continue;
     const hb = hurtbox(s.fighters[t]);
     if (overlap(box, hb)) {
-      a.moveHit = true;
       const hx = (Math.max(box.x, hb.x) + Math.min(box.x + box.w, hb.x + hb.w)) / 2;
       const hy = (Math.max(box.y, hb.y) + Math.min(box.y + box.h, hb.y + hb.h)) / 2;
-      applyHit(s, t, a.x, a.move!, a.char, inputs[t], hx, hy);
+      const first = a.hitCount === 0;
+      a.hitCount += 1;
+      a.hitTick = a.statusTime;
+      a.moveHit = true;
+      const landed = applyHit(s, t, a.x, a.move!, a.char, inputs[t], hx, hy, first);
+      // Ein abgefangener/gelöster Angriff trifft nicht weiter
+      if (!landed || a.status !== 'attack') a.hitCount = maxHits;
     }
   }
   // Projektile
@@ -595,7 +793,7 @@ function resolveCombat(s: GameState, inputs: [number, number]) {
     const pb: Box = { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h };
     if (hittable(s.fighters[t]) && overlap(pb, hurtbox(s.fighters[t]))) {
       p.life = 0;
-      applyHit(s, t, p.x - p.vx * 10, p.move, s.fighters[p.owner].char, inputs[t], p.x, p.y);
+      applyHit(s, t, p.x - p.vx * 10, p.move, s.fighters[p.owner].char, inputs[t], p.x, p.y, true, true);
     }
   }
   // Projektile heben sich gegenseitig auf
@@ -646,6 +844,7 @@ function checkRoundEnd(s: GameState) {
     const kind = kinds[(s.tick + s.round) % kinds.length];
     s.finisher = { kind, loser };
     s.slowmo = SLOWMO_TICKS;
+    s.hitstop = 0;
     s.events.push({ type: 'ko', loser, finisher: kind });
   } else if (s.timer <= 0) {
     const ra = a.hp / getCharacter(a.char).maxHp;
@@ -682,6 +881,12 @@ export function step(s: GameState, inputs: [number, number]) {
   if (s.slowmo > 0) {
     s.slowmo -= 1;
     if (s.slowmo % SLOWMO_FACTOR !== 0) return;
+  }
+  // Hitstop: alles steht kurz still, nur Tastendrücke werden weiter gepuffert
+  if (s.hitstop > 0) {
+    s.hitstop -= 1;
+    s.fighters.forEach((f, i) => bufferInput(f, s.phase === 'fight' ? inputs[i] : 0, false));
+    return;
   }
   s.phaseTime += 1;
 
