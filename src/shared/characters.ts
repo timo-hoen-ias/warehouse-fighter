@@ -416,7 +416,7 @@ export const CHARACTERS: CharacterDef[] = [
     jumpVel: 0.21,
     colors: { vest: 0x00bcd4, shirt: 0xeceff1, pants: 0x263238, skin: 0xd9a07a, helmet: 0xffffff },
     prop: 'clipboard',
-    hat: 'helmet',
+    hat: 'none',
     build: 0.95,
     moves: buildMoves(
       {
@@ -597,7 +597,7 @@ export const CHARACTERS: CharacterDef[] = [
     jumpVel: 0.22,
     colors: { vest: 0xffc107, shirt: 0x6d4c41, pants: 0x212121, skin: 0x7a4b2a, helmet: 0x2e7d32 },
     prop: 'wrench',
-    hat: 'cap',
+    hat: 'none',
     build: 0.98,
     moves: buildMoves(
       {
