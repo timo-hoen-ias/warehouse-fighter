@@ -461,7 +461,7 @@ export class GameRenderer {
     this.time += edt;
     this.setStage(state.stage);
     this.stage?.update(this.time, edt);
-    state.fighters.forEach((f, i) => this.fighters[i]?.update(f, this.time, edt, this.smoothing));
+    state.fighters.forEach((f, i) => this.fighters[i]?.update(f, this.time, edt, this.smoothing, state.phase === 'intro'));
     if (state.finisher && !this.finisher && state.phase === 'roundEnd') {
       // Online beigetreten oder Event verpasst: Finisher trotzdem zeigen
       this.startFinisher(state.finisher.kind, state.finisher.loser, state);

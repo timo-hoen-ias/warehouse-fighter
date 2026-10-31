@@ -89,13 +89,20 @@ Niemand soll mit einer einzigen Attacke gewinnen, die man nur oft genug drückt:
   Haltung und Tempo je Kampfstil (Boxer wippt, Schwergewicht schwingt nach, Roboter schnappt zackig),
   leuchtende Schlagspuren in Kämpferfarbe, **Hitstop** (kurzes Einfrieren beim Treffer), Schockwellen, Staub bei Landung,
   Dash und Sturz.
+- **Eigene Bewegungen je Kämpfer** (`src/client/charAnims.ts`): eigene Grundschläge (Gerds Gabel-Doppelhieb, Kims
+  Roundhouse, Lenas Klemmbrett-Hieb, Ludgers Bauchramme, Robos Kolbenschlag …), eigener Gang (watscheln, federn,
+  marschieren, schleichen), Leerlauf-Gesten (Nacken knacken, Kaffee schlürfen, Kopf-Scan), Intro- und Siegerposen und
+  unterschiedlich starke Trefferreaktionen.
 - **Live-Schatten:** Die Sonne folgt dem Kampf mit einem engen, scharfen Schattenbereich, dazu schwenkt ein Hallenstrahler
   über die Kampffläche.
 - **Retro-Pixelfilter** (aus / leicht / mittel / stark, in den Optionen): niedrigere Auflösung, reduzierte
   Farben, Dithering und Scanlines.
-- **Sound** komplett synthetisiert: geschichtete Treffer je nach Gewicht, Hallenhall, Klonk beim Blocken, Aufprall beim
-  Knockdown, eigener Klang je Geschoss, **Kampfschreie und Schmerzlaute mit eigener Stimme je Kämpfer** (Formant-Synthese,
-  der Roboter piept), Signatur-Klänge (Stapler-Warnpiepen, Lkw-Hupe, Scanner …), Konter- und Panzer-Klänge, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
+- **Sound** komplett synthetisiert und **in Stereo nach Position**: geschichtete Treffer je nach Gewicht (Tritte klingen
+  dumpfer, schwere Treffer lassen die Regale scheppern), Schritte je nach Körpergewicht (der Roboter klackert),
+  Absprung-Geräusch, Hallenhall, Klonk beim Blocken, Aufprall beim
+  Knockdown, eigener Klang je Geschoss, **Kampfschreie und Schmerzlaute mit eigener Stimme je Kämpfer** (Formant-Synthese
+  mit Vokal-Gleiten und rauer Stimme, der Roboter piept), **Kampfrufe**: Spezialmoves werden in eigener Stimmlage
+  ausgerufen (abschaltbar), Signatur-Klänge (Stapler-Warnpiepen, Lkw-Hupe, Scanner …), Konter- und Panzer-Klänge, Ansager per Sprachausgabe („Runde eins“, „Schichtbeginn!“, „Feierabend!“).
 - **90er-Arcade-Musik:** ein Menütitel und fünf Kampftitel („Schichtbeginn“, „Gabelstapler-Turbo“, „Kühlhaus-Techno“,
   „Nachtschicht“, „Endgegner“). Automatisch passend zur Arena, im Arcade-Finale läuft der Endgegner-Titel – oder fest
   gewählt in den Optionen.
@@ -104,7 +111,7 @@ Niemand soll mit einer einzigen Attacke gewinnen, die man nur oft genug drückt:
 
 - **Hauptmenü:** Spielen (Arcade, gegen CPU, 2 Spieler lokal) · Online (Raum erstellen/beitreten) · Kampfschule · Optionen
 - **Pausenmenü:** Weiter · Kampf neu starten · Befehlsliste & Kombos · Optionen · Hauptmenü
-- **Optionen:** Retro-Filter, Blut, Musik an/aus, Musiktitel (mit Vorschau), Musik- und Effekt-Lautstärke, Ansager.
+- **Optionen:** Retro-Filter, Blut, Musik an/aus, Musiktitel (mit Vorschau), Musik- und Effekt-Lautstärke, Ansager, Kampfrufe.
   Alles wird im Browser gespeichert. `Esc` geht in jedem Untermenü zurück.
 
 ## Handy

@@ -10,11 +10,14 @@ import {
   type Weight,
   announce,
   audioSettings,
+  callout,
   fightSong,
   setAnnouncerEnabled,
+  setCalloutsEnabled,
   setMusicEnabled,
   setMusicLevel,
   setMusicVolume,
+  setPan,
   setSfxVolume,
   setTrack,
   sfx,
@@ -128,9 +131,37 @@ function weightOf(m: MoveKey, char?: string): Weight {
 const charOf = (slot: 0 | 1) => state.fighters[slot].char;
 const ROUND_WORDS = ['eins', 'zwei', 'drei', 'vier', 'fünf'];
 
+/** Stimmlage der Kampfrufe je Kämpfer (Tonhöhe, Tempo). */
+const CALLOUT_VOICE: Record<string, [number, number]> = {
+  gerd: [0.35, 1.0],
+  kim: [1.5, 1.3],
+  piet: [0.8, 1.1],
+  lena: [1.3, 1.15],
+  ludger: [0.2, 0.95],
+  paul: [1.8, 1.4],
+  ingrid: [1.1, 1.1],
+  kalle: [0.5, 1.05],
+  rita: [1.2, 1.2],
+  robo: [0.1, 0.8],
+};
+
+/** Stereo-Position eines Ereignisses relativ zur Bildmitte (zwischen den Kämpfern). */
+function panFor(e: GameEvent): number {
+  const [a, b] = state.fighters;
+  const mid = (a.x + b.x) / 2;
+  const x =
+    'x' in e ? e.x
+    : 'player' in e ? state.fighters[e.player].x
+    : 'target' in e ? state.fighters[e.target].x
+    : 'loser' in e ? state.fighters[e.loser].x
+    : mid;
+  return (x - mid) / 5;
+}
+
 function handleEvents(events: GameEvent[]) {
   renderer.handleEvents(events, state);
   for (const e of events) {
+    setPan(panFor(e));
     switch (e.type) {
       case 'roundStart':
         banner(`RUNDE ${e.round}`);
@@ -147,7 +178,11 @@ function handleEvents(events: GameEvent[]) {
         const m = getCharacter(c).moves[e.move];
         if (m.grab) sfx.grab();
         else sfx.swing(weightOf(e.move, c), KICK_MOVES.has(e.move) || m.anim === 'spinKick' || m.anim === 'slide');
-        if (e.move === 'sig1' || e.move === 'sig2') sfx.signature(c);
+        if (e.move === 'sig1' || e.move === 'sig2') {
+          sfx.signature(c);
+          const [pitch, rate] = CALLOUT_VOICE[c] ?? [1, 1.15];
+          if (Math.random() < 0.7) callout(`${m.name}!`, pitch, rate);
+        }
         if (getCharacter(c).robot) sfx.servo();
         // Kampfschreie: Spezialmoves und Abschlüsse immer, schwere oft, leichte selten
         const heavy = HEAVY_MOVES.has(e.move);
@@ -181,7 +216,9 @@ function handleEvents(events: GameEvent[]) {
         break;
       case 'hit': {
         const attacker = charOf(e.target === 0 ? 1 : 0);
-        sfx.hit(weightOf(e.move, attacker), e.combo, !!getCharacter(charOf(e.target)).robot);
+        const am = getCharacter(attacker).moves[e.move];
+        const kick = KICK_MOVES.has(e.move) || am?.anim === 'spinKick' || am?.anim === 'slide';
+        sfx.hit(weightOf(e.move, attacker), e.combo, !!getCharacter(charOf(e.target)).robot, kick);
         if (e.heavy || Math.random() < 0.3) sfx.voice(charOf(e.target), 'hurt');
         sfx.comboTick(e.combo);
         showCombo(e.target === 0 ? 1 : 0, e.combo);
@@ -215,6 +252,51 @@ function handleEvents(events: GameEvent[]) {
         break;
     }
   }
+  setPan(0);
+}
+
+// --- Schritte und Absprünge ---------------------------------------------------
+// Rein klanglich aus den Positionen abgeleitet, damit es auch online funktioniert.
+const feet = [
+  { x: 0, dist: 0, air: false },
+  { x: 0, dist: 0, air: false },
+];
+function footsteps() {
+  if (state.phase !== 'fight') {
+    feet.forEach((t, i) => {
+      t.x = state.fighters[i].x;
+      t.dist = 0;
+      t.air = state.fighters[i].y > 0.01;
+    });
+    return;
+  }
+  const mid = (state.fighters[0].x + state.fighters[1].x) / 2;
+  state.fighters.forEach((f, i) => {
+    const t = feet[i];
+    const air = f.y > 0.01;
+    const def = getCharacter(f.char);
+    if (air && !t.air && f.status === 'jump' && !f.launched) {
+      setPan((f.x - mid) / 5);
+      sfx.jump();
+    }
+    t.air = air;
+    const dx = Math.abs(f.x - t.x);
+    t.x = f.x;
+    if (air || dx > 1 || f.status === 'hitstun' || f.status === 'down' || f.status === 'getup') {
+      t.dist = 0;
+      return;
+    }
+    t.dist += dx;
+    // Schwere Kämpfer machen größere, dumpfere Schritte
+    const weight = Math.max(0.8, Math.min(1.3, def.maxHp / 1000));
+    const stride = 0.55 * weight;
+    if (t.dist >= stride) {
+      t.dist -= stride;
+      setPan((f.x - mid) / 5);
+      sfx.step(weight, !!def.robot);
+    }
+  });
+  setPan(0);
 }
 
 function showResult(winner: 0 | 1 | -1) {
@@ -560,6 +642,7 @@ function renderOptions() {
   $('optMusic').textContent = onOff(audioSettings.music);
   $('optTrack').textContent = trackLabel(audioSettings.track);
   $('optAnnouncer').textContent = onOff(audioSettings.announcer);
+  $('optCallouts').textContent = onOff(audioSettings.callouts);
   $<HTMLInputElement>('optMusicVol').value = String(Math.round(audioSettings.musicVolume * 100));
   $<HTMLInputElement>('optSfxVol').value = String(Math.round(audioSettings.sfxVolume * 100));
 }
@@ -590,6 +673,10 @@ option('optTrack', () => {
 option('optAnnouncer', () => {
   setAnnouncerEnabled(!audioSettings.announcer);
   if (audioSettings.announcer) announce('Schichtbeginn!');
+});
+option('optCallouts', () => {
+  setCalloutsEnabled(!audioSettings.callouts);
+  if (audioSettings.callouts) callout('Gabelattacke!', 0.7);
 });
 $<HTMLInputElement>('optMusicVol').addEventListener('input', (e) => setMusicVolume(Number((e.target as HTMLInputElement).value) / 100));
 $<HTMLInputElement>('optSfxVol').addEventListener('input', (e) => setSfxVolume(Number((e.target as HTMLInputElement).value) / 100));
@@ -824,7 +911,10 @@ function frame(now: number) {
   }
 
   renderer.render(state, paused && mode !== 'online' ? 0 : dt);
-  if (running) updateHud();
+  if (running) {
+    updateHud();
+    if (!paused) footsteps();
+  }
   const slow = state.slowmo > 0;
   if (slow !== wasSlow && !paused) setMusicLevel(slow ? 0.25 : 1);
   wasSlow = slow;
