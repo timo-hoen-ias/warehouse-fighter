@@ -178,7 +178,11 @@ describe('Tekken-System', () => {
         record();
       }
     }
-    run(s, 20);
+    // Hitstop verschiebt den letzten Treffer etwas nach hinten
+    for (let i = 0; i < 20; i++) {
+      step(s, [0, 0]);
+      record();
+    }
     expect(hits).toEqual([1, 2, 3]);
     expect(s.fighters[0].move === 'finisher' || hits.length === 3).toBe(true);
   });
@@ -252,7 +256,7 @@ describe('Tekken-System', () => {
   it('jeder Kämpfer hat die komplette Moveliste', () => {
     for (const id of ['gerd', 'kim', 'piet', 'lena', 'ludger', 'paul', 'ingrid', 'kalle', 'rita', 'robo']) {
       const moves = getCharacter(id).moves;
-      expect(Object.keys(moves).length).toBe(18);
+      expect(Object.keys(moves).length).toBe(21);
       for (const m of Object.values(moves)) {
         expect(m.name.length).toBeGreaterThan(2);
         expect(m.startup).toBeGreaterThan(0);
